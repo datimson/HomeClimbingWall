@@ -1,4 +1,4 @@
-# HomeClimbingWall
+# Home climbing wall concept
 
 Interactive 3D concept planner for a backyard climbing wall. The app lets you adjust wall angles, panel dimensions, roof pitch, mats, and camera position to validate geometry before building.
 
