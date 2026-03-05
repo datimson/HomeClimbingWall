@@ -10,6 +10,34 @@ Interactive 3D concept planner for a backyard climbing wall. The app lets you ad
 
 Open [index.html](./index.html) directly in your browser.
 
+## Quest 2 VR preview
+
+- Serve over `https://` (for example [wall.deantimson.com](https://wall.deantimson.com/)).
+- Open the page in Quest Browser and click **Enter VR**.
+- Movement in VR:
+  - Room-scale headset movement for true 1:1 scale.
+  - Left thumbstick locomotion to move around the wall.
+
+## Edit all textures in one image
+
+You can pack all wall + volume textures into one editable atlas, then split it back:
+
+```powershell
+scripts\texture-atlas-pack.bat
+scripts\texture-atlas-unpack.bat
+```
+
+Generated files:
+
+- `textures/texture-atlas.png` (edit this)
+- `textures/texture-atlas.manifest.json` (used for slicing back)
+
+Optional: include bump maps in the atlas too:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/texture-atlas-pack.ps1 -IncludeBumps
+```
+
 ## Screenshot
 
 ![HomeClimbingWall screenshot](./Screenshot.jpg)

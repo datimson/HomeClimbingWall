@@ -54,9 +54,11 @@ function rebuild() {
   // ── L-shaped roof cap ──
   buildLRoof(wallGroup, fixedSideLen, dWidth, s.f2WidthTop, dRoofZ, fRoofZ);
   buildPolyRoofExtension(wallGroup, fixedSideLen, s.f2WidthTop);
+  buildCeilingPanelHolds(wallGroup);
 
   // ── Adjustable panel ──
   buildAdjPanel(wallGroup, adjLen, fixedSideLen);
+  buildClimbingHolds(wallGroup, s);
   buildABCornerGuide(wallGroup, s, fixedSideLen);
 
   // ── Labels ──
@@ -266,15 +268,34 @@ function rebuildCrashMatsGeometry() {
   const f1Width = THREE.MathUtils.clamp(Number(wallState.f1Width) || 0, 0, W);
   const frontStopX = THREE.MathUtils.clamp(W - f1Width, 0, W);
 
+  const matTexturePack = (
+    crashMatTextureEnabled &&
+    typeof getCrashMatTexturePack === 'function'
+  ) ? getCrashMatTexturePack() : null;
   if (!crashMatsGroup.userData.matMaterial) {
     crashMatsGroup.userData.matMaterial = new THREE.MeshLambertMaterial({
-      color: 0x3f5f7f,
-      transparent: true,
-      opacity: 0.9
+      color: 0xffffff,
+      map: matTexturePack ? matTexturePack.map : null,
+      bumpMap: matTexturePack ? matTexturePack.bumpMap : null,
+      bumpScale: matTexturePack ? 0.036 : 0.0,
+      transparent: false,
+      opacity: 1.0
     });
-    crashMatsGroup.userData.edgeMaterial = new THREE.LineBasicMaterial({color: 0x6d91b7});
+    crashMatsGroup.userData.edgeMaterial = new THREE.LineBasicMaterial({color: 0x4f575f});
   }
   const matMaterial = crashMatsGroup.userData.matMaterial;
+  if (matTexturePack) {
+    matMaterial.color.setHex(0xffffff);
+    matMaterial.map = matTexturePack.map;
+    matMaterial.bumpMap = matTexturePack.bumpMap;
+    matMaterial.bumpScale = 0.036;
+  } else {
+    matMaterial.color.setHex(0x3f5f7f);
+    matMaterial.map = null;
+    matMaterial.bumpMap = null;
+    matMaterial.bumpScale = 0.0;
+  }
+  matMaterial.needsUpdate = true;
   const edgeMaterial = crashMatsGroup.userData.edgeMaterial;
 
   const addPad = (w, d, cx, cz) => {
@@ -350,7 +371,7 @@ function rebuildCrashMatsGeometry() {
       const m = new THREE.Mesh(
         new THREE.CapsuleGeometry(0.12 * (height / adultH), Math.max(0.20, height - 0.24), 6, 12),
         new THREE.MeshLambertMaterial({
-          color:0x9aa3ad,
+          color:0x111111,
           transparent:true,
           opacity:personOpacity,
           depthWrite:false
@@ -448,9 +469,9 @@ function rebuildCrashMatsGeometry() {
         else keep = colorDist > adaptiveDistThresh;
         const di = i;
         if (keep) {
-          dst.data[di] = 196;
-          dst.data[di + 1] = 204;
-          dst.data[di + 2] = 214;
+          dst.data[di] = 14;
+          dst.data[di + 1] = 14;
+          dst.data[di + 2] = 14;
           dst.data[di + 3] = 255;
           keepCount++;
           const px = ((i / 4) % w) | 0;

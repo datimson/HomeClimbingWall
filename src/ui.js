@@ -37,6 +37,128 @@ function persistCurrentCameraState() {
   return saveCameraState(getCurrentCameraState());
 }
 
+const XR_FLOOR_EYE_HEIGHT = 1.72;
+const XR_MOVE_SPEED_MPS = 1.9;
+const XR_STICK_DEADZONE = 0.16;
+let xrSessionActive = false;
+let xrLastFrameTs = 0;
+let xrRestoreCameraState = null;
+const xrForward = new THREE.Vector3();
+const xrRight = new THREE.Vector3();
+const xrMoveDelta = new THREE.Vector3();
+const xrUp = new THREE.Vector3(0, 1, 0);
+
+function applyStickDeadzone(value) {
+  const v = Number(value) || 0;
+  const a = Math.abs(v);
+  if (a <= XR_STICK_DEADZONE) return 0;
+  const scaled = (a - XR_STICK_DEADZONE) / (1 - XR_STICK_DEADZONE);
+  return Math.sign(v) * THREE.MathUtils.clamp(scaled, 0, 1);
+}
+
+function readPrimaryStick(inputSource) {
+  const axes = inputSource?.gamepad?.axes;
+  if (!axes || axes.length < 2) return {x: 0, y: 0};
+  if (axes.length >= 4) {
+    const magA = Math.hypot(axes[0] || 0, axes[1] || 0);
+    const magB = Math.hypot(axes[2] || 0, axes[3] || 0);
+    if (magB > magA) return {x: axes[2] || 0, y: axes[3] || 0};
+  }
+  return {x: axes[0] || 0, y: axes[1] || 0};
+}
+
+function getVrMoveAxes(session) {
+  if (!session?.inputSources) return {x: 0, y: 0};
+  let fallback = null;
+  for (const source of session.inputSources) {
+    if (!source?.gamepad) continue;
+    const stick = readPrimaryStick(source);
+    if (source.handedness === 'left') return stick;
+    if (!fallback) fallback = stick;
+  }
+  return fallback || {x: 0, y: 0};
+}
+
+function beginVrSession() {
+  stopIntroAnimation({restoreStart: false});
+  hideHoverInfo();
+  if (!xrRestoreCameraState) xrRestoreCameraState = {...getCurrentCameraState()};
+
+  theta = 0;
+  phi = Math.PI * 0.5;
+  radius = 0.001;
+  targetX = W * 0.5;
+  targetY = getActiveFloorY() + XR_FLOOR_EYE_HEIGHT;
+  targetZ = D * 0.72;
+  xrLastFrameTs = performance.now();
+}
+
+function endVrSession() {
+  hideHoverInfo();
+  if (xrRestoreCameraState) {
+    applyCameraState(xrRestoreCameraState);
+    xrRestoreCameraState = null;
+  }
+}
+
+function setupWebXR() {
+  if (!renderer?.xr) return;
+  renderer.xr.enabled = true;
+  renderer.xr.addEventListener('sessionstart', () => {
+    xrSessionActive = true;
+    beginVrSession();
+  });
+  renderer.xr.addEventListener('sessionend', () => {
+    xrSessionActive = false;
+    endVrSession();
+  });
+  if (!THREE.VRButton) return;
+
+  const vrButton = THREE.VRButton.createButton(renderer, {
+    optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+  });
+  if (!vrButton) return;
+  vrButton.id = 'enterVrBtn';
+  wrap.appendChild(vrButton);
+}
+
+function updateVrLocomotion(now) {
+  if (!xrSessionActive) return;
+  const session = renderer.xr.getSession();
+  if (!session) return;
+
+  const ts = Number.isFinite(now) ? now : performance.now();
+  const dt = xrLastFrameTs > 0
+    ? THREE.MathUtils.clamp((ts - xrLastFrameTs) / 1000, 0.001, 0.05)
+    : 1 / 60;
+  xrLastFrameTs = ts;
+
+  const axes = getVrMoveAxes(session);
+  const moveX = applyStickDeadzone(axes.x);
+  const moveY = applyStickDeadzone(axes.y);
+  if (Math.abs(moveX) < 1e-4 && Math.abs(moveY) < 1e-4) return;
+
+  const xrCam = renderer.xr.getCamera(camera);
+  xrCam.getWorldDirection(xrForward);
+  xrForward.y = 0;
+  if (xrForward.lengthSq() < 1e-8) xrForward.set(0, 0, -1);
+  else xrForward.normalize();
+
+  xrRight.crossVectors(xrForward, xrUp);
+  if (xrRight.lengthSq() < 1e-8) xrRight.set(1, 0, 0);
+  else xrRight.normalize();
+
+  xrMoveDelta.set(0, 0, 0);
+  xrMoveDelta.addScaledVector(xrRight, moveX);
+  xrMoveDelta.addScaledVector(xrForward, -moveY);
+  const moveLen = xrMoveDelta.length();
+  if (moveLen > 1) xrMoveDelta.multiplyScalar(1 / moveLen);
+  xrMoveDelta.multiplyScalar(XR_MOVE_SPEED_MPS * dt);
+
+  targetX += xrMoveDelta.x;
+  targetZ += xrMoveDelta.z;
+}
+
 const INTRO_DELAY_MS = 1300;
 const INTRO_TOTAL_MS = 25000;
 const INTRO_END_EASE_WINDOW = 0.14; // final 14% of timeline eases to a stop
@@ -644,6 +766,14 @@ if (crashMatsToggle) {
   });
 }
 
+const texturesToggle = document.getElementById('texturesToggle');
+if (texturesToggle) {
+  texturesToggle.checked = texturesEnabled;
+  texturesToggle.addEventListener('change', () => {
+    setTexturesEnabled(texturesToggle.checked);
+  });
+}
+
 const polyRoofToggle = document.getElementById('polyRoofToggle');
 if (polyRoofToggle) {
   polyRoofToggle.checked = polyRoofEnabled;
@@ -684,6 +814,14 @@ if (conceptVolumesToggle) {
   });
 }
 
+const climbingHoldsToggle = document.getElementById('climbingHoldsToggle');
+if (climbingHoldsToggle) {
+  climbingHoldsToggle.checked = climbingHoldsEnabled;
+  climbingHoldsToggle.addEventListener('change', () => {
+    setClimbingHoldsEnabled(climbingHoldsToggle.checked);
+  });
+}
+
 // Resize
 function resize() {
   const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -696,12 +834,18 @@ resize();
 
 // Animate
 function animate(now) {
-  requestAnimationFrame(animate);
-  updateIntroAnimation(Number.isFinite(now) ? now : performance.now());
-  camera.position.x = targetX + radius * Math.sin(phi) * Math.sin(theta);
-  camera.position.y = targetY + radius * Math.cos(phi);
-  camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);
-  camera.lookAt(targetX, targetY, targetZ);
+  const ts = Number.isFinite(now) ? now : performance.now();
+  if (xrSessionActive) {
+    updateVrLocomotion(ts);
+    camera.position.set(targetX, targetY, targetZ);
+  } else {
+    updateIntroAnimation(ts);
+    camera.position.x = targetX + radius * Math.sin(phi) * Math.sin(theta);
+    camera.position.y = targetY + radius * Math.cos(phi);
+    camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);
+    camera.lookAt(targetX, targetY, targetZ);
+  }
+  const activeCamera = xrSessionActive ? renderer.xr.getCamera(camera) : camera;
   [scalePersonBillboard, scalePersonCompanionBillboard].forEach((billboard, idx) => {
     if (!billboard) return;
     if (!billboard.parent) {
@@ -709,11 +853,12 @@ function animate(now) {
       else scalePersonCompanionBillboard = null;
       return;
     }
-    personLookAtTarget.copy(camera.position);
+    personLookAtTarget.copy(activeCamera.position);
     personLookAtTarget.y = billboard.position.y;
     billboard.lookAt(personLookAtTarget);
   });
   renderer.render(scene, camera);
 }
+setupWebXR();
 startIntroAnimation(true);
-animate();
+renderer.setAnimationLoop(animate);

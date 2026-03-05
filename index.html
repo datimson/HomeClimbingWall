@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Climbing Wall – Design Brief</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/VRButton.js"></script>
 <link rel="stylesheet" href="styles/main.css">
 </head>
 <body>
@@ -16,7 +17,7 @@
       <span>Design Brief — For Engineer Review</span>
     </header>
     <canvas id="c"></canvas>
-    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll or pinch to zoom &nbsp;·&nbsp; Right-drag or two-finger drag to pan &nbsp;·&nbsp; Tap/click to stop intro</div>
+    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll or pinch to zoom &nbsp;·&nbsp; Right-drag or two-finger drag to pan &nbsp;·&nbsp; Tap/click to stop intro &nbsp;·&nbsp; VR: Enter VR + left thumbstick move</div>
     <div id="hoverInfo" class="hover-info"></div>
     <button id="reactivateCameraBtn" class="reactivate-camera-btn" type="button">Replay Intro</button>
   </div>
@@ -65,10 +66,24 @@
         </div>
       </div>
       <div class="toggle-row">
+        <label class="toggle-label" for="climbingHoldsToggle">Climbing Holds</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="climbingHoldsToggle">
+          <span class="toggle-meta">bump mapped</span>
+        </div>
+      </div>
+      <div class="toggle-row">
         <label class="toggle-label" for="crashMatsToggle">Crash Mats</label>
         <div class="toggle-input-wrap">
           <input type="checkbox" id="crashMatsToggle">
           <span class="toggle-meta">0.30m thick</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="texturesToggle">Textures</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="texturesToggle">
+          <span class="toggle-meta">walls + mats</span>
         </div>
       </div>
       <div class="toggle-row">
