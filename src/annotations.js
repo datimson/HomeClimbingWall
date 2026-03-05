@@ -106,18 +106,36 @@ function addLocalFaceLabel(mesh, letter, sub, opts={}) {
 
   const alongUp = Number.isFinite(opts.alongUp) ? opts.alongUp : 0;
   const alongRight = Number.isFinite(opts.alongRight) ? opts.alongRight : 0;
+  const alongUpDist = Number.isFinite(opts.alongUpDist) ? opts.alongUpDist : (size.y * alongUp);
+  const alongRightDist = Number.isFinite(opts.alongRightDist) ? opts.alongRightDist : (size.x * alongRight);
   const normalOffset = Number.isFinite(opts.normalOffset) ? opts.normalOffset : 0.012;
   const width = Number.isFinite(opts.width) ? opts.width : Math.max(0.46, Math.min(0.66, size.x * 0.45));
   const height = Number.isFinite(opts.height) ? opts.height : Math.max(0.22, Math.min(0.32, size.y * 0.2));
-  const halfAlongNormal =
+  let halfAlongNormal =
     Math.abs(normal.x) * size.x * 0.5 +
     Math.abs(normal.y) * size.y * 0.5 +
     Math.abs(normal.z) * size.z * 0.5;
 
+  // For sloped/non-axis-aligned solids, project against real vertices to avoid
+  // large bbox-based offsets that can make labels appear detached.
+  if (opts.useExactSurface) {
+    const pos = mesh.geometry.attributes?.position;
+    if (pos && pos.count > 0) {
+      const v = new THREE.Vector3();
+      let maxAlong = -Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+        const along = v.sub(center).dot(normal);
+        if (along > maxAlong) maxAlong = along;
+      }
+      if (Number.isFinite(maxAlong)) halfAlongNormal = maxAlong;
+    }
+  }
+
   const label = makeFaceLabelMesh(letter, sub, width, height);
   const p = center.clone()
-    .add(up.clone().multiplyScalar(size.y * alongUp))
-    .add(right.clone().multiplyScalar(size.x * alongRight))
+    .add(up.clone().multiplyScalar(alongUpDist))
+    .add(right.clone().multiplyScalar(alongRightDist))
     .add(normal.clone().multiplyScalar(halfAlongNormal + normalOffset));
   label.position.copy(p);
   const m = new THREE.Matrix4().makeBasis(right, up, normal);
@@ -421,9 +439,82 @@ function drawHoverAngle(origin, dir, angleDeg, color=0x99c8ff) {
   return absAngle;
 }
 
+function drawTrainingRigHoverDimensions(info) {
+  const yTop = Number(info?.bracketTopY);
+  const yBottom = Number(info?.bracketBottomY);
+  const widthP1 = toVec3(info?.widthP1);
+  const widthP2 = toVec3(info?.widthP2);
+  const widthM = Number(info?.widthM);
+  const x = Number(info?.anchorX);
+  const anchorZ = Number(info?.anchorZ);
+  if (
+    !Number.isFinite(yTop) ||
+    !Number.isFinite(yBottom)
+  ) return null;
+
+  const height = Math.max(0, yTop - yBottom);
+  let widthVal = 0;
+
+  if (widthP1 && widthP2) {
+    const rawWidth = widthP1.distanceTo(widthP2);
+    widthVal = Number.isFinite(widthM) && widthM > 0 ? widthM : rawWidth;
+    addDim(hoverDimGroup, widthP1, widthP2, `Width ${widthVal.toFixed(2)}m`, 0xd8c67f);
+
+    const wDir = widthP2.clone().sub(widthP1);
+    wDir.y = 0;
+    if (wDir.lengthSq() < 1e-8) wDir.set(1, 0, 0);
+    else wDir.normalize();
+    let perp = new THREE.Vector3(-wDir.z, 0, wDir.x);
+    if (perp.lengthSq() < 1e-8) perp.set(0, 0, 1);
+    else perp.normalize();
+
+    const hBase = widthP2.clone().add(perp.clone().multiplyScalar(0.10));
+    const h0 = new THREE.Vector3(hBase.x, yBottom, hBase.z);
+    const h1 = new THREE.Vector3(hBase.x, yTop, hBase.z);
+    addDim(hoverDimGroup, h0, h1, `Height ${height.toFixed(2)}m`, 0x8fd7a6);
+
+    const gBase = hBase.clone().add(perp.clone().multiplyScalar(0.08));
+    const g0 = new THREE.Vector3(gBase.x, 0, gBase.z);
+    const g1 = new THREE.Vector3(gBase.x, yBottom, gBase.z);
+    addDim(hoverDimGroup, g0, g1, `Ground ${yBottom.toFixed(2)}m`, 0x88c8ee);
+  } else {
+    // Fallback if rig width anchors are unavailable.
+    const z = Number.isFinite(anchorZ) ? anchorZ : D + 0.24;
+    const xAnchor = Number.isFinite(x) ? x : W + 0.20;
+    addDim(
+      hoverDimGroup,
+      new THREE.Vector3(xAnchor, yBottom, z),
+      new THREE.Vector3(xAnchor, yTop, z),
+      `Height ${height.toFixed(2)}m`,
+      0x8fd7a6
+    );
+    addDim(
+      hoverDimGroup,
+      new THREE.Vector3(xAnchor + 0.08, 0, z),
+      new THREE.Vector3(xAnchor + 0.08, yBottom, z),
+      `Ground ${yBottom.toFixed(2)}m`,
+      0x88c8ee
+    );
+  }
+
+  return {
+    wall: 'R',
+    section: 'Training Rig',
+    angleDeg: 0,
+    faceLength: 0,
+    verticalHeight: height,
+    horizontalLength: widthVal,
+    bottomY: yBottom,
+    topY: yTop,
+  };
+}
+
 function drawHoverSectionDimensions(mesh, info) {
   clearHoverSectionDimensions();
   if (!mesh || !info) return null;
+  if (info.hoverKind === 'trainingRig') {
+    return drawTrainingRigHoverDimensions(info);
+  }
   const style = getHoverDimStyle(info.wall);
   const showTopDim =
     (info.wall === 'E' && info.section === 'Section 1') ||

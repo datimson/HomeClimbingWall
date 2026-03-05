@@ -1,10 +1,11 @@
 // --- Orbit controls ---
-let isDragging = false, isRightDrag = false;
+let isDragging = false;
+let dragMode = 'orbit';
 let lastX = 0, lastY = 0;
 let theta = 0.9, phi = 0.55, radius = 12;
 const ORBIT_MIN_POLAR = 0.05;
 const ORBIT_MAX_POLAR = Math.PI - 0.05;
-let targetX = 2, targetY = 1.5, targetZ = 1.5;
+let targetX = 2, targetY = 1.7, targetZ = 1.5;
 const raycaster = new THREE.Raycaster();
 const hoverMouse = new THREE.Vector2();
 const hoverInfoEl = document.getElementById('hoverInfo');
@@ -33,6 +34,21 @@ function getCurrentCameraState() {
 function persistCurrentCameraState() {
   if (typeof saveCameraState !== 'function') return false;
   return saveCameraState(getCurrentCameraState());
+}
+
+function panCamera(dx, dy, verticalPan=false) {
+  const panScale = Math.max(0.004, radius * 0.0017);
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  if (forward.lengthSq() < 1e-8) forward.set(0, 0, -1);
+  else forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+  // Ground-plane pan by default (X/Z), optional vertical pan with Alt/Ctrl.
+  targetX += (-dx * panScale) * right.x + (dy * panScale) * forward.x;
+  targetZ += (-dx * panScale) * right.z + (dy * panScale) * forward.z;
+  if (verticalPan) targetY -= dy * panScale;
 }
 
 function setGroupOpacity(group, alpha) {
@@ -189,17 +205,20 @@ showSaveStatus.timer = null;
 wrap.addEventListener('mousedown', e => {
   hideHoverInfo();
   isDragging = true;
-  isRightDrag = e.button === 2;
+  dragMode = (e.button === 2 || e.button === 1 || e.shiftKey) ? 'pan' : 'orbit';
   lastX = e.clientX; lastY = e.clientY;
 });
 wrap.addEventListener('contextmenu', e => e.preventDefault());
-window.addEventListener('mouseup', () => isDragging = false);
+window.addEventListener('mouseup', () => {
+  isDragging = false;
+  dragMode = 'orbit';
+});
 window.addEventListener('mousemove', e => {
   if (!isDragging) return;
   const dx = e.clientX - lastX, dy = e.clientY - lastY;
   lastX = e.clientX; lastY = e.clientY;
-  if (isRightDrag) {
-    targetX -= dx * 0.01; targetY += dy * 0.01;
+  if (dragMode === 'pan') {
+    panCamera(dx, dy, e.altKey || e.ctrlKey);
   } else {
     theta -= dx * 0.005;
     phi = Math.max(ORBIT_MIN_POLAR, Math.min(ORBIT_MAX_POLAR, phi - dy * 0.005));
@@ -269,6 +288,7 @@ function syncSlidersFromState() {
     ['f1Width', 'f1WidthLabel', 'f1Width', v => v.toFixed(2) + 'm'],
     ['f2Angle', 'f2AngleLabel', 'f2Angle', v => v + '°'],
     ['f2WidthTop', 'f2WidthTopLabel', 'f2WidthTop', v => v.toFixed(2) + 'm'],
+    ['rigOpen', 'rigOpenLabel', 'rigOpen', v => Math.round(v) + '°'],
   ];
   defs.forEach(([id, labelId, key, fmt]) => {
     const el = document.getElementById(id);
@@ -294,6 +314,7 @@ bindSlider('f1Height', 'f1HeightLabel', 'f1Height', v => v.toFixed(2) + 'm', tru
 bindSlider('f1Width', 'f1WidthLabel', 'f1Width', v => v.toFixed(2) + 'm', true);
 bindSlider('f2Angle', 'f2AngleLabel', 'f2Angle', v => v + '°', true);
 bindSlider('f2WidthTop', 'f2WidthTopLabel', 'f2WidthTop', v => v.toFixed(2) + 'm', true);
+bindSlider('rigOpen', 'rigOpenLabel', 'rigOpen', v => Math.round(v) + '°', true);
 syncSlidersFromState();
 
 const saveConfigBtn = document.getElementById('saveConfigBtn');
@@ -333,6 +354,46 @@ if (crashMatsToggle) {
   });
 }
 
+const polyRoofToggle = document.getElementById('polyRoofToggle');
+if (polyRoofToggle) {
+  polyRoofToggle.checked = polyRoofEnabled;
+  polyRoofToggle.addEventListener('change', () => {
+    setPolyRoofEnabled(polyRoofToggle.checked);
+  });
+}
+
+const trainingRigToggle = document.getElementById('trainingRigToggle');
+if (trainingRigToggle) {
+  trainingRigToggle.checked = trainingRigEnabled;
+  trainingRigToggle.addEventListener('change', () => {
+    setTrainingRigEnabled(trainingRigToggle.checked);
+  });
+}
+
+const trainingCabinetToggle = document.getElementById('trainingCabinetToggle');
+if (trainingCabinetToggle) {
+  trainingCabinetToggle.checked = trainingCabinetEnabled;
+  trainingCabinetToggle.addEventListener('change', () => {
+    setTrainingCabinetEnabled(trainingCabinetToggle.checked);
+  });
+}
+
+const campusBoardToggle = document.getElementById('campusBoardToggle');
+if (campusBoardToggle) {
+  campusBoardToggle.checked = campusBoardEnabled;
+  campusBoardToggle.addEventListener('change', () => {
+    setCampusBoardEnabled(campusBoardToggle.checked);
+  });
+}
+
+const conceptVolumesToggle = document.getElementById('conceptVolumesToggle');
+if (conceptVolumesToggle) {
+  conceptVolumesToggle.checked = conceptVolumesEnabled;
+  conceptVolumesToggle.addEventListener('change', () => {
+    setConceptVolumesEnabled(conceptVolumesToggle.checked);
+  });
+}
+
 // Resize
 function resize() {
   const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -350,14 +411,17 @@ function animate() {
   camera.position.y = targetY + radius * Math.cos(phi);
   camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);
   camera.lookAt(targetX, targetY, targetZ);
-  if (scalePersonBillboard) {
-    if (!scalePersonBillboard.parent) scalePersonBillboard = null;
-    else {
-      personLookAtTarget.copy(camera.position);
-      personLookAtTarget.y = scalePersonBillboard.position.y;
-      scalePersonBillboard.lookAt(personLookAtTarget);
+  [scalePersonBillboard, scalePersonCompanionBillboard].forEach((billboard, idx) => {
+    if (!billboard) return;
+    if (!billboard.parent) {
+      if (idx === 0) scalePersonBillboard = null;
+      else scalePersonCompanionBillboard = null;
+      return;
     }
-  }
+    personLookAtTarget.copy(camera.position);
+    personLookAtTarget.y = billboard.position.y;
+    billboard.lookAt(personLookAtTarget);
+  });
   renderer.render(scene, camera);
 }
 animate();

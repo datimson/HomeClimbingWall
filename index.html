@@ -16,7 +16,7 @@
       <span>Design Brief — For Engineer Review</span>
     </header>
     <canvas id="c"></canvas>
-    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Right-drag to pan</div>
+    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Right/Middle-drag to pan &nbsp;·&nbsp; Alt+pan for vertical</div>
     <div id="hoverInfo" class="hover-info"></div>
   </div>
 
@@ -34,11 +34,34 @@
     </div>
 
     <div class="section">
-      <h2>Wall Controls</h2>
-      <div class="control-actions">
-        <button id="saveConfigBtn" class="action-btn">Save Measurements</button>
-        <button id="resetConfigBtn" class="action-btn action-btn--ghost">Reset Defaults</button>
-        <span id="saveStatus" class="save-status"></span>
+      <h2>Display Toggles</h2>
+      <div class="toggle-row">
+        <label class="toggle-label" for="trainingRigToggle">Bracket + Hangboard</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="trainingRigToggle">
+          <span class="toggle-meta">on wall F</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="trainingCabinetToggle">Storage Cabinet</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="trainingCabinetToggle">
+          <span class="toggle-meta">below board</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="campusBoardToggle">Campus Board (D)</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="campusBoardToggle">
+          <span class="toggle-meta">22cm rung spacing</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="conceptVolumesToggle">Concept Volumes</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="conceptVolumesToggle">
+          <span class="toggle-meta">A/B/G/C set</span>
+        </div>
       </div>
       <div class="toggle-row">
         <label class="toggle-label" for="crashMatsToggle">Crash Mats</label>
@@ -47,100 +70,128 @@
           <span class="toggle-meta">0.30m thick</span>
         </div>
       </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="polyRoofToggle">Poly Roof Extension</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="polyRoofToggle">
+          <span class="toggle-meta">E +0.15m clear</span>
+        </div>
+      </div>
+    </div>
 
-      <div class="control-subhead">Wall E — Adjustable Panel</div>
-      <div class="angle-row">
-        <label>Angle</label>
-        <input type="range" id="angleSlider" min="-5" max="60" value="10" step="1">
-        <span class="angle-val" id="angleLabel">10°</span>
-      </div>
-      <div class="control-note control-note--spacious">from vertical — drag to preview</div>
+    <div class="section section-collapsible">
+      <details id="wallControlsDetails" open>
+        <summary class="section-summary">Wall Controls</summary>
+        <div class="section-collapse-body">
+          <div class="control-actions">
+            <button id="saveConfigBtn" class="action-btn">Save Measurements</button>
+            <button id="resetConfigBtn" class="action-btn action-btn--ghost">Reset Defaults</button>
+            <span id="saveStatus" class="save-status"></span>
+          </div>
 
-      <div class="control-subhead">Wall A — Side Wall</div>
-      <div class="angle-row">
-        <label>Angle</label>
-        <input type="range" id="aAngle" min="0" max="60" value="20" step="1">
-        <span class="angle-val" id="aAngleLabel">20°</span>
-      </div>
-      <div class="angle-row">
-        <label>Width</label>
-        <input type="range" id="aWidth" min="0.3" max="2.5" value="1.5" step="0.05">
-        <span class="angle-val" id="aWidthLabel">1.50m</span>
-      </div>
+          <div class="control-subhead">Wall E — Adjustable Panel</div>
+          <div class="angle-row">
+            <label>Angle</label>
+            <input type="range" id="angleSlider" min="-5" max="60" value="10" step="1">
+            <span class="angle-val" id="angleLabel">10°</span>
+          </div>
+          <div class="control-note control-note--spacious">from vertical — drag to preview</div>
 
-      <div class="control-subhead mt-12">Wall B — Back Corner</div>
-      <div class="angle-row">
-        <label>Angle</label>
-        <input type="range" id="bAngle" min="0" max="60" value="20" step="1">
-        <span class="angle-val" id="bAngleLabel">20°</span>
-      </div>
-      <div class="angle-row">
-        <label>Width</label>
-        <input type="range" id="bWidth" min="0.3" max="2.5" value="1.1" step="0.05">
-        <span class="angle-val" id="bWidthLabel">1.10m</span>
-      </div>
+          <div class="control-subhead">Wall A — Side Wall</div>
+          <div class="angle-row">
+            <label>Angle</label>
+            <input type="range" id="aAngle" min="0" max="60" value="20" step="1">
+            <span class="angle-val" id="aAngleLabel">20°</span>
+          </div>
+          <div class="angle-row">
+            <label>Width</label>
+            <input type="range" id="aWidth" min="0.3" max="2.5" value="1.5" step="0.05">
+            <span class="angle-val" id="aWidthLabel">1.50m</span>
+          </div>
 
-      <div class="control-subhead mt-12">Wall C — Back Middle</div>
-      <div class="angle-row">
-        <label>Angle</label>
-        <input type="range" id="cAngle" min="0" max="60" value="20" step="1">
-        <span class="angle-val" id="cAngleLabel">20°</span>
-      </div>
-      <div class="angle-row">
-        <label>Width</label>
-        <input type="range" id="cWidth" min="0.3" max="2.5" value="1.6" step="0.05">
-        <span class="angle-val" id="cWidthLabel">1.60m</span>
-      </div>
+          <div class="control-subhead mt-12">Wall B — Back Corner</div>
+          <div class="angle-row">
+            <label>Angle</label>
+            <input type="range" id="bAngle" min="0" max="60" value="20" step="1">
+            <span class="angle-val" id="bAngleLabel">20°</span>
+          </div>
+          <div class="angle-row">
+            <label>Width</label>
+            <input type="range" id="bWidth" min="0.3" max="2.5" value="1.1" step="0.05">
+            <span class="angle-val" id="bWidthLabel">1.10m</span>
+          </div>
 
-      <div class="control-subhead mt-12">Wall D — Back Far (2 sections)</div>
-      <div class="control-note control-note--muted">Section 1: adjustable base section</div>
-      <div class="angle-row">
-        <label>Section 1 angle</label>
-        <input type="range" id="dAngle" min="0" max="60" value="10" step="1">
-        <span class="angle-val" id="dAngleLabel">10°</span>
-      </div>
-      <div class="angle-row">
-        <label>Section 1 height</label>
-        <input type="range" id="d1Height" min="0.5" max="2.7" value="2.0" step="0.05">
-        <span class="angle-val" id="d1HeightLabel">2.00m</span>
-      </div>
-      <div class="control-note control-note--muted-top">Section 2: continues to roof</div>
-      <div class="angle-row">
-        <label>Section 2 angle</label>
-        <input type="range" id="d2Angle" min="0" max="75" value="10" step="1">
-        <span class="angle-val" id="d2AngleLabel">10°</span>
-      </div>
-      <div class="control-note">Width auto-fills remaining back wall</div>
+          <div class="control-subhead mt-12">Wall C — Back Middle</div>
+          <div class="angle-row">
+            <label>Angle</label>
+            <input type="range" id="cAngle" min="0" max="60" value="20" step="1">
+            <span class="angle-val" id="cAngleLabel">20°</span>
+          </div>
+          <div class="angle-row">
+            <label>Width</label>
+            <input type="range" id="cWidth" min="0.3" max="2.5" value="1.6" step="0.05">
+            <span class="angle-val" id="cWidthLabel">1.60m</span>
+          </div>
 
-      <div class="control-subhead mt-12">Wall F — Cave Wall (opposite D)</div>
-      <div class="control-note control-note--muted">Section 1: adjustable height (min 2m), width up to 1m</div>
-      <div class="angle-row">
-        <label>Section 1 angle</label>
-        <input type="range" id="f1Angle" min="0" max="40" value="20" step="1">
-        <span class="angle-val" id="f1AngleLabel">20°</span>
-      </div>
-      <div class="angle-row">
-        <label>Section 1 height</label>
-        <input type="range" id="f1Height" min="2.0" max="2.7" value="2.0" step="0.05">
-        <span class="angle-val" id="f1HeightLabel">2.00m</span>
-      </div>
-      <div class="angle-row">
-        <label>Section 1 width</label>
-        <input type="range" id="f1Width" min="0.1" max="1.0" value="1.0" step="0.05">
-        <span class="angle-val" id="f1WidthLabel">1.00m</span>
-      </div>
-      <div class="control-note control-note--muted-top">Section 2: continues to roof, 75° max</div>
-      <div class="angle-row">
-        <label>Section 2 angle</label>
-        <input type="range" id="f2Angle" min="0" max="75" value="50" step="1">
-        <span class="angle-val" id="f2AngleLabel">50°</span>
-      </div>
-      <div class="angle-row">
-        <label>Top width</label>
-        <input type="range" id="f2WidthTop" min="0.3" max="4.0" value="1.3" step="0.05">
-        <span class="angle-val" id="f2WidthTopLabel">1.30m</span>
-      </div>
-      <div class="control-note">Both sections right-aligned — roof spans top width to meet D</div>
+          <div class="control-subhead mt-12">Wall D — Back Far (2 sections)</div>
+          <div class="control-note control-note--muted">Section 1: adjustable base section</div>
+          <div class="angle-row">
+            <label>Section 1 angle</label>
+            <input type="range" id="dAngle" min="0" max="60" value="10" step="1">
+            <span class="angle-val" id="dAngleLabel">10°</span>
+          </div>
+          <div class="angle-row">
+            <label>Section 1 height</label>
+            <input type="range" id="d1Height" min="0.5" max="2.7" value="2.0" step="0.05">
+            <span class="angle-val" id="d1HeightLabel">2.00m</span>
+          </div>
+          <div class="control-note control-note--muted-top">Section 2: continues to roof</div>
+          <div class="angle-row">
+            <label>Section 2 angle</label>
+            <input type="range" id="d2Angle" min="0" max="75" value="10" step="1">
+            <span class="angle-val" id="d2AngleLabel">10°</span>
+          </div>
+          <div class="control-note">Width auto-fills remaining back wall</div>
+
+          <div class="control-subhead mt-12">Wall F — Cave Wall (opposite D)</div>
+          <div class="control-note control-note--muted">Section 1: adjustable height (min 2m), width up to 1m</div>
+          <div class="angle-row">
+            <label>Section 1 angle</label>
+            <input type="range" id="f1Angle" min="0" max="40" value="20" step="1">
+            <span class="angle-val" id="f1AngleLabel">20°</span>
+          </div>
+          <div class="angle-row">
+            <label>Section 1 height</label>
+            <input type="range" id="f1Height" min="2.0" max="2.7" value="2.0" step="0.05">
+            <span class="angle-val" id="f1HeightLabel">2.00m</span>
+          </div>
+          <div class="angle-row">
+            <label>Section 1 width</label>
+            <input type="range" id="f1Width" min="0.1" max="1.0" value="1.0" step="0.05">
+            <span class="angle-val" id="f1WidthLabel">1.00m</span>
+          </div>
+          <div class="control-note control-note--muted-top">Section 2: continues to roof, 75° max</div>
+          <div class="angle-row">
+            <label>Section 2 angle</label>
+            <input type="range" id="f2Angle" min="0" max="75" value="50" step="1">
+            <span class="angle-val" id="f2AngleLabel">50°</span>
+          </div>
+          <div class="angle-row">
+            <label>Top width</label>
+            <input type="range" id="f2WidthTop" min="0.3" max="4.0" value="1.3" step="0.05">
+            <span class="angle-val" id="f2WidthTopLabel">1.30m</span>
+          </div>
+          <div class="control-note">Both sections right-aligned — roof spans top width to meet D</div>
+
+          <div class="control-subhead mt-12">Training Rig — Hinge</div>
+          <div class="angle-row">
+            <label>Open angle</label>
+            <input type="range" id="rigOpen" min="0" max="180" value="180" step="1">
+            <span class="angle-val" id="rigOpenLabel">180°</span>
+          </div>
+          <div class="control-note">0° closed on F back · 180° open along +X beside F</div>
+        </div>
+      </details>
     </div>
 
     <div class="section">
@@ -154,6 +205,7 @@
         <div class="leg-item"><div class="leg-swatch leg-swatch--f"></div><strong class="wall-letter">F</strong> &nbsp;Cave wall — 20° / 50°</div>
         <div class="leg-item"><div class="leg-swatch leg-swatch--g"></div><strong class="wall-letter">G</strong> &nbsp;Ceiling infill — auto-fit between D and F</div>
         <div class="leg-item"><div class="leg-swatch leg-swatch--cap"></div>Top cap — Colorbond Monument</div>
+        <div class="leg-item"><div class="leg-swatch leg-swatch--poly"></div>Polycarbonate extension roof (toggle)</div>
       </div>
     </div>
 

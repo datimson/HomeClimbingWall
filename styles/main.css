@@ -37,6 +37,45 @@
   .panel h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.15em; color: #888; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #2a2a2a; }
 
   .section { margin-bottom: 28px; }
+  .section-collapsible { margin-bottom: 28px; }
+  .section-collapsible details {
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    background: #202020;
+    overflow: hidden;
+  }
+  .section-collapsible details[open] { padding-bottom: 8px; }
+  .section-summary {
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: #888;
+    padding: 12px 12px 10px;
+    border-bottom: 1px solid #2a2a2a;
+    user-select: none;
+    position: relative;
+  }
+  .section-summary::-webkit-details-marker { display: none; }
+  .section-summary::marker { content: ''; }
+  .section-summary::before {
+    content: '▾';
+    position: absolute;
+    right: 12px;
+    top: 11px;
+    color: #666;
+    font-size: 0.8rem;
+  }
+  .section-collapsible details:not([open]) .section-summary {
+    border-bottom: none;
+  }
+  .section-collapsible details:not([open]) .section-summary::before {
+    content: '▸';
+  }
+  .section-collapse-body {
+    padding: 12px 12px 0;
+  }
 
   .dim-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
   .dim-card { background: #252525; border: 1px solid #2f2f2f; border-radius: 4px; padding: 10px 12px; }
@@ -131,7 +170,7 @@
     gap: 8px;
   }
 
-  #crashMatsToggle {
+  .toggle-input-wrap input[type=checkbox] {
     width: 16px;
     height: 16px;
     accent-color: #5a8bb8;
@@ -175,3 +214,4 @@
   .leg-swatch--f { background: #6a4174; }
   .leg-swatch--g { background: #2f76d2; }
   .leg-swatch--cap { background: #3d3d3d; }
+  .leg-swatch--poly { background: #bfd6ea; }

@@ -44,12 +44,16 @@ function rebuild() {
   buildBackSectionTwoStage(wallGroup, dWidth, s.dAngle, s.d2Angle, s.bWidth + s.cWidth + dWidth/2, s.d1Height, 'D');
   buildSideSection(wallGroup, fixedSideLen, s.aAngle, fixedSideLen, 'A');
   buildFWall(wallGroup, s.f1Width, s.f1Angle, s.f2Angle, s.f2WidthTop, s.f1Height);
+  buildTrainingRig(wallGroup, s);
+  buildCampusBoardOnD(wallGroup, s);
+  buildConceptVolumes(wallGroup, s);
 
   // Apply collision clipping
   applyClipping(s);
 
   // ── L-shaped roof cap ──
   buildLRoof(wallGroup, fixedSideLen, dWidth, s.f2WidthTop, dRoofZ, fRoofZ);
+  buildPolyRoofExtension(wallGroup, fixedSideLen, s.f2WidthTop);
 
   // ── Adjustable panel ──
   buildAdjPanel(wallGroup, adjLen, fixedSideLen);
@@ -105,11 +109,15 @@ function rebuild() {
   const gapMesh = findGapMesh();
   if (gapMesh) {
     addLocalFaceLabel(gapMesh, 'G', 'ply 17mm', {
-      normalLocal: {x:0, y:-1, z:0},
-      upLocal: {x:0, y:0, z:-1},
+      // Match roof pitch so label lies on the sloped ceiling surface.
+      normalLocal: {x:0, y:-1, z:ROOF_PITCH_TAN},
+      upLocal: {x:0, y:ROOF_PITCH_TAN, z:1},
       width: 0.58,
       height: 0.26,
-      normalOffset: 0.01,
+      normalOffset: 0.0016,
+      useExactSurface: true,
+      // Move toward the panel edge with an absolute in-plane distance.
+      alongUpDist: 0.65,
     });
   }
 
@@ -222,6 +230,8 @@ function rebuild() {
   arcText.scale.set(0.50, 0.125, 1);
   arcText.position.copy(eArcPt((arcMin + arcMax) / 2)).add(new THREE.Vector3(0.28, 0.18, 0));
   dimGroup.add(arcText);
+
+  rebuildCrashMatsGeometry();
 }
 
 // Initial build
@@ -231,59 +241,131 @@ rebuild();
 const floor = box(W, 0.05, D, new THREE.MeshLambertMaterial({color:0x222222}), 0,0,0, W/2, -0.025, D/2);
 scene.add(floor);
 
-// ── Crash mats (toggleable) ──
-(function() {
+function clearGroupChildren(group) {
+  while (group.children.length) {
+    const child = group.children.pop();
+    group.remove(child);
+    child.traverse(obj => {
+      if (obj.geometry && typeof obj.geometry.dispose === 'function') obj.geometry.dispose();
+    });
+  }
+}
+
+function rebuildCrashMatsGeometry() {
+  if (!crashMatsGroup) return;
+  clearGroupChildren(crashMatsGroup);
+
   const seam = 0.02;
   const matW = (W - seam) * 0.5;
   const matD = (D - seam) * 0.5;
+  const edgeExtension = 0.50;
+  const padShrink = 0.012; // small inset to avoid coplanar z-fighting against wall kick faces
   const matY = CRASH_MAT_THICKNESS * 0.5;
-  const matMaterial = new THREE.MeshLambertMaterial({
-    color: 0x3f5f7f,
-    transparent: true,
-    opacity: 0.9
-  });
-  const edgeMaterial = new THREE.LineBasicMaterial({color: 0x6d91b7});
 
-  crashMatsGroup = new THREE.Group();
+  const f1Width = THREE.MathUtils.clamp(Number(wallState.f1Width) || 0, 0, W);
+  const frontStopX = THREE.MathUtils.clamp(W - f1Width, 0, W);
+
+  if (!crashMatsGroup.userData.matMaterial) {
+    crashMatsGroup.userData.matMaterial = new THREE.MeshLambertMaterial({
+      color: 0x3f5f7f,
+      transparent: true,
+      opacity: 0.9
+    });
+    crashMatsGroup.userData.edgeMaterial = new THREE.LineBasicMaterial({color: 0x6d91b7});
+  }
+  const matMaterial = crashMatsGroup.userData.matMaterial;
+  const edgeMaterial = crashMatsGroup.userData.edgeMaterial;
+
+  const addPad = (w, d, cx, cz) => {
+    const wInset = w - padShrink;
+    const dInset = d - padShrink;
+    if (wInset <= 0.01 || dInset <= 0.01) return;
+    const pad = box(wInset, CRASH_MAT_THICKNESS, dInset, matMaterial, 0, 0, 0, cx, matY, cz);
+    pad.add(new THREE.LineSegments(new THREE.EdgesGeometry(pad.geometry), edgeMaterial));
+    crashMatsGroup.add(pad);
+  };
+
+  // 4 main pads inside room.
   for (let ix = 0; ix < 2; ix++) {
     for (let iz = 0; iz < 2; iz++) {
       const cx = matW * 0.5 + ix * (matW + seam);
       const cz = matD * 0.5 + iz * (matD + seam);
-      const pad = box(matW, CRASH_MAT_THICKNESS, matD, matMaterial, 0,0,0, cx, matY, cz);
-      pad.add(new THREE.LineSegments(new THREE.EdgesGeometry(pad.geometry), edgeMaterial));
-      crashMatsGroup.add(pad);
+      addPad(matW, matD, cx, cz);
     }
   }
+
+  // Front 50cm sections on E-F edge (z = D ... D+0.5).
+  // Right section is shortened to stop at the inside face of F: x = W - f1Width.
+  const leftFrontStart = 0;
+  const leftFrontEnd = matW;
+  const rightFrontStart = matW + seam;
+  const rightFrontEnd = Math.min(W, frontStopX);
+  if (leftFrontEnd > leftFrontStart) {
+    addPad(leftFrontEnd - leftFrontStart, edgeExtension, (leftFrontStart + leftFrontEnd) * 0.5, D + edgeExtension * 0.5);
+  }
+  if (rightFrontEnd > rightFrontStart) {
+    addPad(rightFrontEnd - rightFrontStart, edgeExtension, (rightFrontStart + rightFrontEnd) * 0.5, D + edgeExtension * 0.5);
+  }
+
+  // Side 50cm sections on F-D edge (x = W ... W+0.5), limited to z <= D.
+  for (let iz = 0; iz < 2; iz++) {
+    const cx = W + edgeExtension * 0.5;
+    const cz = matD * 0.5 + iz * (matD + seam);
+    addPad(edgeExtension, matD, cx, cz);
+  }
+}
+
+// ── Crash mats (toggleable) ──
+(function() {
+  crashMatsGroup = new THREE.Group();
+  rebuildCrashMatsGeometry();
   crashMatsGroup.visible = crashMatsEnabled;
   scene.add(crashMatsGroup);
 })();
 
-// ── Human scale reference (man.png, 1.75m visible height) ──
+// ── Human scale references (adult + child using man.png silhouette) ──
 (function() {
-  const personH = 1.75;
+  const adultH = 1.75;
+  const childH = SON_HEIGHT;
   const personOpacity = 0.5;
-  const baseX = W * 0.5;
   const baseZ = D * 0.5;
+  const adultBaseX = W * 0.5 - 0.22;
+  const childBaseX = adultBaseX + 0.04;
+  const childBaseZ = baseZ + 0.55;
   const facingY = -0.35;
 
+  function setPrimary(mesh, isBillboard) {
+    scalePersonMesh = mesh;
+    scalePersonBillboard = isBillboard ? mesh : null;
+  }
+
+  function setCompanion(mesh, isBillboard) {
+    scalePersonCompanionMesh = mesh;
+    scalePersonCompanionBillboard = isBillboard ? mesh : null;
+  }
+
   function addFallback() {
-    scalePersonBillboard = null;
-    const m = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.12, personH - 0.24, 6, 12),
-      new THREE.MeshLambertMaterial({
-        color:0x9aa3ad,
-        transparent:true,
-        opacity:personOpacity,
-        depthWrite:false
-      })
-    );
-    m.userData.personYOffset = personH * 0.5;
-    m.position.set(baseX, getActiveFloorY() + m.userData.personYOffset, baseZ);
-    m.rotation.y = facingY;
-    m.castShadow = true;
-    m.receiveShadow = true;
-    scalePersonMesh = m;
-    scene.add(m);
+    const createFallback = (height, baseX, baseZPos) => {
+      const m = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.12 * (height / adultH), Math.max(0.20, height - 0.24), 6, 12),
+        new THREE.MeshLambertMaterial({
+          color:0x9aa3ad,
+          transparent:true,
+          opacity:personOpacity,
+          depthWrite:false
+        })
+      );
+      m.userData.personYOffset = height * 0.5;
+      m.position.set(baseX, getActiveFloorY() + m.userData.personYOffset, baseZPos);
+      m.rotation.y = facingY;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      scene.add(m);
+      return m;
+    };
+
+    setPrimary(createFallback(adultH, adultBaseX, baseZ), false);
+    setCompanion(createFallback(childH, childBaseX, childBaseZ), false);
   }
 
   const embeddedManImage = (
@@ -323,8 +405,6 @@ scene.add(floor);
       const src = ctx.getImageData(0, 0, w, h);
       const dst = ctx.createImageData(w, h);
 
-      // Prefer alpha masking when transparency exists; otherwise separate the figure
-      // from background using adaptive color-distance from corner samples.
       let hasTransparency = false;
       for (let i = 3; i < src.data.length; i += 4) {
         if (src.data[i] < 250) { hasTransparency = true; break; }
@@ -367,7 +447,6 @@ scene.add(floor);
         else keep = colorDist > adaptiveDistThresh;
         const di = i;
         if (keep) {
-          // Normalize to a clearer silhouette while preserving anti-aliased edges.
           dst.data[di] = 196;
           dst.data[di + 1] = 204;
           dst.data[di + 2] = 214;
@@ -403,32 +482,35 @@ scene.add(floor);
       }
 
       const contentH = contentHRaw;
-      const contentW = contentWRaw;
-      const planeH = personH * (h / contentH);
-      const planeW = planeH * (w / h);
       const bottomMargin = (h - 1) - maxY;
-      const yCenter = planeH * 0.5 - (bottomMargin / h) * planeH;
       const contentCenterX = (minX + maxX + 1) * 0.5;
       const xPixelOffset = contentCenterX - (w * 0.5);
-      const xCenterOffset = -(xPixelOffset / w) * planeW;
 
-      const billboard = new THREE.Mesh(
-        new THREE.PlaneGeometry(planeW, planeH),
-        new THREE.MeshBasicMaterial({
-          map: silhouetteTex,
-          transparent: true,
-          opacity: personOpacity,
-          alphaTest: 0.4,
-          depthWrite: false,
-          side: THREE.DoubleSide
-        })
-      );
-      billboard.userData.personYOffset = yCenter;
-      billboard.position.set(baseX + xCenterOffset, getActiveFloorY() + yCenter, baseZ);
-      billboard.rotation.y = facingY;
-      scene.add(billboard);
-      scalePersonBillboard = billboard;
-      scalePersonMesh = billboard;
+      const createBillboard = (height, baseX, baseZPos) => {
+        const planeH = height * (h / contentH);
+        const planeW = planeH * (w / h);
+        const yCenter = planeH * 0.5 - (bottomMargin / h) * planeH;
+        const xCenterOffset = -(xPixelOffset / w) * planeW;
+        const billboard = new THREE.Mesh(
+          new THREE.PlaneGeometry(planeW, planeH),
+          new THREE.MeshBasicMaterial({
+            map: silhouetteTex,
+            transparent: true,
+            opacity: personOpacity,
+            alphaTest: 0.4,
+            depthWrite: false,
+            side: THREE.DoubleSide
+          })
+        );
+        billboard.userData.personYOffset = yCenter;
+        billboard.position.set(baseX + xCenterOffset, getActiveFloorY() + yCenter, baseZPos);
+        billboard.rotation.y = facingY;
+        scene.add(billboard);
+        return billboard;
+      };
+
+      setPrimary(createBillboard(adultH, adultBaseX, baseZ), true);
+      setCompanion(createBillboard(childH, childBaseX, childBaseZ), true);
       tex.dispose();
     },
     undefined,

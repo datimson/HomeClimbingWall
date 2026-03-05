@@ -8,4 +8,4 @@ Open [index.html](./index.html) directly in your browser.
 
 ## Screenshot
 
-![HomeClimbingWall screenshot](./Screenshot%202026-03-04%20192716.jpg)
+![HomeClimbingWall screenshot](./Screenshot.jpg)

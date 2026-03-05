@@ -133,6 +133,88 @@ function makeSideInfill(mat, pts) {
   const m = new THREE.Mesh(geo, mat); m.castShadow=true; return m;
 }
 
+function makeSolidFromVerts(verts, indices, mat) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+// Hanging truncated pyramid (flat top and flat bottom).
+function makeFrustumVolume(topW, topD, bottomW, bottomD, height, mat) {
+  const tHW = topW * 0.5;
+  const tHD = topD * 0.5;
+  const bHW = bottomW * 0.5;
+  const bHD = bottomD * 0.5;
+  const verts = [
+    -tHW, 0, -tHD, // top
+     tHW, 0, -tHD,
+     tHW, 0,  tHD,
+    -tHW, 0,  tHD,
+    -bHW, -height, -bHD, // bottom
+     bHW, -height, -bHD,
+     bHW, -height,  bHD,
+    -bHW, -height,  bHD,
+  ];
+  const indices = [
+    0, 1, 2, 0, 2, 3,       // top
+    5, 4, 7, 5, 7, 6,       // bottom
+    0, 4, 5, 0, 5, 1,       // front
+    1, 5, 6, 1, 6, 2,       // right
+    2, 6, 7, 2, 7, 3,       // back
+    3, 7, 4, 3, 4, 0,       // left
+  ];
+  return makeSolidFromVerts(verts, indices, mat);
+}
+
+// Corner overhang volume with a 4-vertex top cap (includes an outward "nose" vertex).
+// bottomShiftX/Z let the lower footprint follow wall-angle drop so side faces can stay attached.
+function makeCornerOverhangVolume(topX, topZ, topOut, bottomX, bottomZ, bottomOut, drop, bottomShiftX, bottomShiftZ, mat) {
+  const yTopOut = topOut * ROOF_PITCH_TAN;
+  const yTopZ = topZ * ROOF_PITCH_TAN;
+  const verts = [
+    0.00, 0.00,    0.00,      // 0 top corner point
+    topX, 0.00,    0.00,      // 1 top X edge (on wall B plane)
+    topOut * 0.90, yTopOut, topOut, // 2 top outward "nose" (pushed further along +X)
+    0.00, yTopZ,   topZ,      // 3 top Z edge (on wall A plane)
+    0.00 - bottomShiftX, -drop,          0.00 - bottomShiftZ, // 4 bottom corner point
+    bottomX - bottomShiftX, -drop,        0.00 - bottomShiftZ, // 5 bottom X edge (on wall B plane)
+    bottomOut * 0.80 - bottomShiftX, yTopOut - drop, bottomOut - bottomShiftZ, // 6 bottom outward point
+    0.00 - bottomShiftX, yTopZ - drop,   bottomZ - bottomShiftZ, // 7 bottom Z edge (on wall A plane)
+  ];
+  const indices = [
+    0, 1, 2, 0, 2, 3,   // top (quad as 2 triangles)
+    5, 4, 7, 5, 7, 6,   // bottom
+    // side 0-1 omitted (wall B side; use wall surface instead)
+    1, 5, 6, 1, 6, 2,   // side 1-2
+    2, 6, 7, 2, 7, 3,   // side 2-3
+    // side 3-0 omitted (wall A side; use wall surface instead)
+  ];
+  return makeSolidFromVerts(verts, indices, mat);
+}
+
+// Dart volume: slanted top triangle and elongated point toward wall below.
+function makeDartVolume(width, topDepth, topBackDrop, tipDrop, mat) {
+  const hw = width * 0.5;
+  const verts = [
+    -hw, tipDrop,               0.00,     // 0 top-left (on wall plane)
+     hw, tipDrop,               0.00,     // 1 top-right (on wall plane)
+      0, tipDrop - topBackDrop, topDepth, // 2 top apex (out from wall)
+      0, 0,                     0.00,     // 3 lower wall point
+  ];
+  const indices = [
+    0, 1, 2, // top slanted triangle
+    0, 3, 1,
+    1, 3, 2,
+    2, 3, 0,
+  ];
+  return makeSolidFromVerts(verts, indices, mat);
+}
+
 function sectionInfo(wall, section, angleDeg, verticalHeight, bottomY, extra={}) {
   const rad = angleDeg * Math.PI / 180;
   const faceLength = verticalHeight / Math.max(0.0001, Math.cos(rad));
@@ -629,6 +711,402 @@ function buildFWall(group, f1Width, f1Angle, f2Angle, f2WidthTop, f1Height=2.0) 
   // diagonal over the same area creates coplanar overlap artifacts while orbiting.
 }
 
+// ── Campus board on wall D ──
+function buildCampusBoardOnD(group, s) {
+  if (!s || !campusBoardEnabled) return;
+
+  const dWidth = Math.max(0.1, W - s.bWidth - s.cWidth);
+  const pivotX = s.bWidth + s.cWidth + dWidth * 0.5;
+
+  const rungSpacing = 0.22;
+  const rungWNominal = 0.32;
+  const rungDepth = 0.025;
+  const rungHeight = 0.045;
+  const firstRungOffset = 1.20; // above active floor (mats top when enabled)
+  const firstRungY = getActiveFloorY() + firstRungOffset;
+  const faceOffset = 0.008;
+
+  const H_base = roofUnderY(0) - KICK;
+  const h1 = Math.max(0.1, Math.min(H_base - 0.1, Number(s.d1Height) || 2.0));
+  const r1 = THREE.MathUtils.degToRad(Number(s.dAngle) || 0);
+  const r2 = THREE.MathUtils.degToRad(Number(s.d2Angle) || 0);
+  const tanR1 = Math.tan(r1);
+  const tanR2 = Math.tan(r2);
+  const splitY = KICK + h1;
+  const splitZ = h1 * tanR1;
+
+  const denom = Math.max(0.05, 1 - ROOF_PITCH_TAN * tanR2);
+  const roofZRaw = (h1 * tanR1) + ((H_base - h1) * tanR2);
+  const roofZ = THREE.MathUtils.clamp(roofZRaw / denom, 0, D);
+  const roofY = roofUnderY(roofZ);
+
+  // Try for 10 rungs first, then 9, otherwise use what fits.
+  const maxRungY = roofY - 0.18;
+  const capacity = Math.floor((maxRungY - firstRungY) / rungSpacing) + 1;
+  if (capacity <= 0) return;
+  const rungCount = capacity >= 10 ? 10 : (capacity >= 9 ? 9 : capacity);
+  if (rungCount <= 0) return;
+
+  const rungWidth = rungWNominal;
+  if (dWidth <= 0.10) return;
+
+  const addRungAt = (y, depth, height) => {
+    const onLower = y <= splitY + 1e-5;
+    const angle = onLower ? r1 : r2;
+    const zFace = onLower
+      ? (y - KICK) * tanR1
+      : splitZ + (y - splitY) * tanR2;
+    const z = zFace + depth * 0.5 + faceOffset;
+
+    const rung = box(
+      rungWidth, height, depth,
+      campusRungMat,
+      angle, 0, 0,
+      pivotX, y, z
+    );
+    rung.castShadow = true;
+    rung.receiveShadow = true;
+    rung.add(new THREE.LineSegments(new THREE.EdgesGeometry(rung.geometry), campusRungEdgeMat));
+    group.add(rung);
+  };
+
+  for (let i = 0; i < rungCount; i++) {
+    const y = firstRungY + i * rungSpacing;
+    addRungAt(y, rungDepth, rungHeight);
+  }
+}
+
+// ── Concept volumes (toggleable) ──
+function buildConceptVolumes(group, s) {
+  if (!s || !conceptVolumesEnabled) return;
+
+  const roofBaseAvail = (H_fixed + 0.001) - KICK;
+  const dWidth = Math.max(0.1, W - s.bWidth - s.cWidth);
+  const fixedSideLen = s.aWidth;
+
+  // Derive D/F roof-edge depths to locate center of G.
+  const d1H = Math.max(0.1, Math.min((H_fixed - KICK) - 0.1, s.d1Height));
+  const dTan1 = Math.tan(THREE.MathUtils.degToRad(s.dAngle));
+  const dTan2 = Math.tan(THREE.MathUtils.degToRad(s.d2Angle));
+  const dDen = Math.max(0.05, 1 - ROOF_PITCH_TAN * dTan2);
+  const dRoofZ = THREE.MathUtils.clamp(((d1H * dTan1) + ((roofBaseAvail - d1H) * dTan2)) / dDen, 0, D);
+
+  const f1H = Math.max(2.0, Math.min((H_fixed - KICK) - 0.1, s.f1Height));
+  const fTan1 = Math.tan(THREE.MathUtils.degToRad(s.f1Angle));
+  const fTan2 = Math.tan(THREE.MathUtils.degToRad(s.f2Angle));
+  const fDen = Math.max(0.05, 1 + ROOF_PITCH_TAN * fTan2);
+  const fRoofZ = THREE.MathUtils.clamp((D - (f1H * fTan1) - ((roofBaseAvail - f1H) * fTan2)) / fDen, 0, D);
+
+  const addVolume = (mesh, edgePairs=null) => {
+    if (Array.isArray(edgePairs) && edgePairs.length && mesh?.geometry?.attributes?.position) {
+      const pos = mesh.geometry.attributes.position;
+      const pts = [];
+      edgePairs.forEach(([a, b]) => {
+        if (!Number.isInteger(a) || !Number.isInteger(b)) return;
+        if (a < 0 || b < 0 || a >= pos.count || b >= pos.count) return;
+        pts.push(
+          new THREE.Vector3(pos.getX(a), pos.getY(a), pos.getZ(a)),
+          new THREE.Vector3(pos.getX(b), pos.getY(b), pos.getZ(b))
+        );
+      });
+      if (pts.length >= 2) {
+        const edgeGeo = new THREE.BufferGeometry().setFromPoints(pts);
+        mesh.add(new THREE.LineSegments(edgeGeo, conceptVolumeEdgeMat));
+      }
+    } else {
+      mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), conceptVolumeEdgeMat));
+    }
+    group.add(mesh);
+  };
+
+  // 1) Corner volume fitting A + B + ceiling:
+  // largest contact surface at ceiling, tapering narrower toward the bottom.
+  const aRad = THREE.MathUtils.degToRad(s.aAngle);
+  const bRad = THREE.MathUtils.degToRad(s.bAngle);
+  // Solve corner anchor against B-plane and sloped ceiling underside so top sits flush.
+  const tanB = Math.tan(bRad);
+  const yCornerDen = Math.max(0.05, 1 - (tanB * ROOF_PITCH_TAN));
+  const yCornerTop = (
+    (H_fixed + 0.001) - CEILING_PLY_THICKNESS - (KICK * tanB * ROOF_PITCH_TAN)
+  ) / yCornerDen + 0.002;
+  const yCornerRel = Math.max(0, yCornerTop - KICK);
+  const xAB = yCornerRel * Math.tan(aRad);
+  const zAB = yCornerRel * tanB;
+  const cornerDrop = 0.62;
+  const cornerShiftX = cornerDrop * Math.tan(aRad);
+  const cornerShiftZ = cornerDrop * Math.tan(bRad);
+  const cornerVol = makeCornerOverhangVolume(
+    0.64, 0.60, 0.84,
+    0.30, 0.26, 0.44,
+    cornerDrop,
+    cornerShiftX, cornerShiftZ,
+    conceptVolumeMat
+  );
+  cornerVol.position.set(xAB - 0.001, yCornerTop, zAB - 0.001);
+  // Keep edge highlight only on exposed faces; omit A/B wall-contact boundaries.
+  addVolume(cornerVol, [
+    [1,2], [2,3],   // exposed top edges
+    [5,6], [6,7],   // exposed bottom edges
+    [2,6],          // front vertical ridge
+  ]);
+
+  // 2) Hanging volume from center of G: wider thin frustum with flat bottom.
+  const xDInner = W - dWidth;
+  const xFInner = W - s.f2WidthTop;
+  const zG = THREE.MathUtils.clamp((dRoofZ + fRoofZ) * 0.5, fixedSideLen, D);
+  const xGLeft = (xDInner + xFInner) * 0.5;
+  const xGCenter = (xGLeft + W) * 0.5;
+  const yGTop = roofUnderY(zG) - CEILING_PLY_THICKNESS - 0.004;
+  const gHeight = 0.68;
+  const gTopW = 0.52;
+  const gBottomW = 0.24;
+  const gTopD = 0.34;
+  const gPitch = THREE.MathUtils.degToRad(ROOF_PITCH_DEG);
+  // Cylinder frustum avoids stray triangulation artifacts and keeps a flat bottom.
+  const gGeom = new THREE.CylinderGeometry(gTopW * 0.5, gBottomW * 0.5, gHeight, 4, 1, false);
+  const gVol = new THREE.Mesh(gGeom, conceptVolumeMat);
+  gVol.castShadow = true;
+  gVol.receiveShadow = true;
+  gVol.scale.z = gTopD / gTopW;
+  gVol.rotation.set(-gPitch, Math.PI * 0.25, 0);
+  gVol.position.set(xGCenter, yGTop - (gHeight * 0.5 * Math.cos(gPitch)) - 0.001, zG);
+  addVolume(gVol);
+
+  // 3) Smaller foothold volumes on C and B:
+  // slanted top triangle with elongated point down/back to wall.
+  const placeBackWallDart = (x, tipY, angleRad, width, topDepth, topBackDrop, tipDrop) => {
+    const faceZ = Math.max(0, (tipY - KICK) * Math.tan(angleRad));
+    const v = makeDartVolume(width, topDepth, topBackDrop, tipDrop, conceptVolumeMat);
+    // Largest face lies on the wall plane; volume projects out and follows wall pitch.
+    v.position.set(x, tipY, faceZ + 0.006);
+    v.rotation.set(angleRad, 0, 0);
+    addVolume(v);
+  };
+
+  const cTipY = getActiveFloorY() + 0.66;
+  const cAngle = THREE.MathUtils.degToRad(s.cAngle);
+  const cX = s.bWidth + s.cWidth * 0.62;
+  // Press apex in a bit (smaller top) and increase top drop for a steeper profile.
+  placeBackWallDart(cX, cTipY, cAngle, 0.26, 0.10, 0.10, 0.34);
+
+  // Smaller companion copy on wall B, placed lower.
+  const bTipY = getActiveFloorY() + 0.50;
+  const bAngle = THREE.MathUtils.degToRad(s.bAngle);
+  // Shift toward the B/C boundary so it sits closer to the C dart.
+  const bX = Math.max(0.12, s.bWidth - 0.10);
+  placeBackWallDart(bX, bTipY, bAngle, 0.19, 0.07, 0.08, 0.24);
+}
+
+// ── Hinged external training rig + storage cabinet on the back of F ──
+function buildTrainingRig(group, s) {
+  if (!s) return;
+  const showRig = (typeof trainingRigEnabled === 'boolean') ? trainingRigEnabled : true;
+  const showCabinet = (typeof trainingCabinetEnabled === 'boolean') ? trainingCabinetEnabled : true;
+  if (!showRig && !showCabinet) return;
+
+  const boardH = 0.22;
+  const boardT = 0.045;
+  const frameDepth = 0.05;
+  const uprightW = 0.04;
+  const frameOffsetFromAxisZ = frameDepth * 0.5 + 0.004;
+  const extDepth = 0.16;
+  const barClearance = 0.03;
+  const barRadius = 0.018;
+  const boardGap = 0.006;
+  const hangSide = -1; // opposite side of bracket frame (toward wall when closed)
+  const yBar = THREE.MathUtils.clamp(TRAINING_PULLUP_BAR_HEIGHT, KICK + 1.2, roofUnderY(D) + 1.0);
+  const yTop = yBar + 0.02;
+  const boardTop = Math.min(TRAINING_HANGBOARD_TOP_HEIGHT, yTop - 0.12);
+  const boardY = boardTop - boardH * 0.5;
+  const yBottom = boardY - boardH * 0.28;
+
+  // Collapsed envelope constrained to F section 1 width.
+  const f1Width = Math.max(0.12, Number(s.f1Width) || 0.6);
+  const maxCollapsedW = Math.max(0.12, f1Width - 0.02);
+  let boardW = Math.min(0.60, maxCollapsedW); // Beastmaker nominal width
+  let spanW = Math.min(maxCollapsedW, boardW + 0.20);
+  if (spanW < boardW + 0.04) boardW = Math.max(0.10, spanW - 0.04);
+
+  const xCenter = W - (f1Width * 0.5);
+  const hingeX = W + 0.045;
+  // Push hinge out in +Z so board + bar can sit on the wall side and still fold closed.
+  const hingeWallClearance = 0.01;
+  const wallSideDepth = frameDepth * 0.5 + extDepth + barClearance + barRadius;
+  const hingeZ = D + wallSideDepth + hingeWallClearance;
+
+  if (showCabinet) {
+    // Cabinet outside wall only (no recess modeling).
+    const cabDepth = 0.30;
+    const cabBottom = KICK + 0.08;
+    const cabTop = Math.max(cabBottom + 0.45, boardY - boardH * 0.5 - 0.10);
+    const cabH = cabTop - cabBottom;
+    const cabW = Math.max(0.24, Math.min(maxCollapsedW, spanW));
+    const cabCenterZ = D + cabDepth * 0.5 + 0.01;
+
+    const cabinet = box(
+      cabW, cabH, cabDepth,
+      new THREE.MeshLambertMaterial({color:0x3c464f}),
+      0, 0, 0,
+      xCenter, cabBottom + cabH * 0.5, cabCenterZ
+    );
+    cabinet.castShadow = true;
+    cabinet.receiveShadow = true;
+    cabinet.add(new THREE.LineSegments(new THREE.EdgesGeometry(cabinet.geometry), new THREE.LineBasicMaterial({color:0x738392})));
+    group.add(cabinet);
+
+    const cabDoor = box(
+      cabW - 0.04, cabH - 0.04, 0.02,
+      new THREE.MeshLambertMaterial({color:0x5a6570}),
+      0, 0, 0,
+      xCenter, cabBottom + cabH * 0.5, D + cabDepth + 0.01
+    );
+    cabDoor.castShadow = true;
+    cabDoor.receiveShadow = true;
+    group.add(cabDoor);
+  }
+
+  if (!showRig) return;
+
+  // Hinge wraps around the side of F: side plate + back plate only.
+  const yPlateCenter = (yTop + yBottom) * 0.5;
+  const plateH = (yTop - yBottom) + 0.10;
+  const hingeReach = Math.max(0.04, hingeZ - (D + 0.015));
+  const plateSpine = box(
+    0.05, plateH, hingeReach,
+    trainingFrameMat,
+    0, 0, 0,
+    W + 0.02, yPlateCenter, D + 0.015 + hingeReach * 0.5
+  );
+  const plateBack = box(
+    0.06, plateH, 0.03,
+    trainingFrameMat,
+    0, 0, 0,
+    W - 0.01, yPlateCenter, D + 0.015
+  );
+  const plateSide = box(
+    0.03, plateH, 0.06,
+    trainingFrameMat,
+    0, 0, 0,
+    W + 0.015, yPlateCenter, D - 0.005
+  );
+  [plateSpine, plateBack, plateSide].forEach(m => {
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+  });
+
+  // Hinged frame: slider drives 0° (closed) .. 90° (open beside F, along +X).
+  const openDeg = THREE.MathUtils.clamp(Number(s.rigOpen) || 0, 0, 180);
+  const openRad = THREE.MathUtils.degToRad(openDeg);
+
+  const pivot = new THREE.Group();
+  pivot.position.set(hingeX, 0, hingeZ);
+  pivot.rotation.y = openRad;
+  group.add(pivot);
+
+  // Keep the hinge axis on the outside edge of the frame (no plate/frame overlap when closed).
+  const rightXLocal = -uprightW * 0.5;
+  const leftXLocal = rightXLocal - spanW + uprightW;
+  const midXLocal = (leftXLocal + rightXLocal) * 0.5;
+  const frameYMid = (yTop + yBottom) * 0.5;
+
+  const addPivotFrame = (w, h, d, x, y, z=0) => {
+    const m = box(w, h, d, trainingFrameMat, 0, 0, 0, x, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    pivot.add(m);
+    return m;
+  };
+  addPivotFrame(0.04, yTop - yBottom, frameDepth, leftXLocal + 0.02, frameYMid, frameOffsetFromAxisZ);
+  addPivotFrame(0.04, yTop - yBottom, frameDepth, rightXLocal, frameYMid, frameOffsetFromAxisZ);
+  addPivotFrame(spanW, 0.04, frameDepth, midXLocal, yTop, frameOffsetFromAxisZ);
+  addPivotFrame(spanW, 0.04, frameDepth, midXLocal, yBottom, frameOffsetFromAxisZ);
+
+  // Hinge knuckles
+  [yBottom + 0.06, yTop - 0.06].forEach(y => {
+    const knuckle = new THREE.Mesh(new THREE.CylinderGeometry(0.010, 0.010, 0.12, 12), pullupBarMat);
+    knuckle.position.set(0, y, 0);
+    knuckle.castShadow = true;
+    knuckle.receiveShadow = true;
+    pivot.add(knuckle);
+  });
+
+  // Hangboard on the opposite face of frame in closed state.
+  const boardZLocal = frameOffsetFromAxisZ + hangSide * (frameDepth * 0.5 + boardT * 0.5 + boardGap);
+  const board = box(boardW, boardH, boardT, hangboardMat, 0, 0, 0, midXLocal, boardY, boardZLocal);
+  board.castShadow = true;
+  board.receiveShadow = true;
+  pivot.add(board);
+
+  // Pockets
+  const slotCount = 4;
+  const slotW = boardW * 0.15;
+  const slotSpan = boardW * 0.70;
+  for (let i = 0; i < slotCount; i++) {
+    const t = slotCount === 1 ? 0 : (i / (slotCount - 1) - 0.5);
+    const x = midXLocal + t * slotSpan;
+    const slotZ = boardZLocal + hangSide * (boardT * 0.5 + 0.006);
+    const slot = box(slotW, 0.03, 0.012, hangboardSlotMat, 0, 0, 0, x, boardY - 0.03, slotZ);
+    slot.castShadow = true;
+    slot.receiveShadow = true;
+    pivot.add(slot);
+  }
+
+  // Extension and pull-up bar above hangboard.
+  const extY = yBar;
+  const zExtCenter = frameOffsetFromAxisZ + hangSide * (frameDepth * 0.5 + extDepth * 0.5);
+  [leftXLocal + 0.02, rightXLocal].forEach(x => {
+    const ext = box(0.045, 0.045, extDepth, trainingFrameMat, 0, 0, 0, x, extY, zExtCenter);
+    ext.castShadow = true;
+    ext.receiveShadow = true;
+    pivot.add(ext);
+  });
+  const zBarMountLocal = frameOffsetFromAxisZ + hangSide * (frameDepth * 0.5 + extDepth);
+  const barAxisZ = zBarMountLocal + (hangSide * barClearance);
+  [leftXLocal + 0.02, rightXLocal].forEach(x => {
+    const clampDepth = Math.abs(barAxisZ - zBarMountLocal);
+    const clampZ = (zBarMountLocal + barAxisZ) * 0.5;
+    const clamp = box(0.03, 0.03, clampDepth, trainingFrameMat, 0, 0, 0, x, extY, clampZ);
+    clamp.castShadow = true;
+    clamp.receiveShadow = true;
+    pivot.add(clamp);
+  });
+
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(barRadius, barRadius, spanW, 20), pullupBarMat);
+  bar.rotation.z = Math.PI * 0.5;
+  bar.position.set(midXLocal, extY, barAxisZ);
+  bar.castShadow = true;
+  bar.receiveShadow = true;
+  pivot.add(bar);
+
+  // Hover metadata: expose both X/Z so hover dim logic can choose dominant axis.
+  pivot.updateMatrixWorld(true);
+  const frameFaceLocalZ = frameOffsetFromAxisZ + hangSide * (frameDepth * 0.5);
+  const frameFrontWorld = pivot.localToWorld(new THREE.Vector3(midXLocal, yTop, frameFaceLocalZ));
+  const barWorld = pivot.localToWorld(new THREE.Vector3(midXLocal, extY, barAxisZ));
+  const widthLWorld = pivot.localToWorld(new THREE.Vector3(leftXLocal + 0.02, yBottom - 0.10, frameFaceLocalZ));
+  const widthRWorld = pivot.localToWorld(new THREE.Vector3(rightXLocal, yBottom - 0.10, frameFaceLocalZ));
+  registerSectionHover(
+    board,
+    sectionInfo('R', 'Training Rig', 0, yTop - yBottom, yBottom, {
+      hoverKind: 'trainingRig',
+      bracketTopY: yTop,
+      bracketBottomY: yBottom,
+      wallX: W,
+      wallZ: D,
+      frontX: frameFrontWorld.x,
+      frontZ: frameFrontWorld.z,
+      barX: barWorld.x,
+      barZ: barWorld.z,
+      widthM: spanW,
+      widthP1: {x: widthLWorld.x, y: widthLWorld.y, z: widthLWorld.z},
+      widthP2: {x: widthRWorld.x, y: widthRWorld.y, z: widthRWorld.z},
+      anchorX: Math.max(frameFrontWorld.x, barWorld.x) + 0.14,
+      anchorZ: frameFrontWorld.z + (hangSide * 0.18),
+    })
+  );
+}
+
 // ── L-shaped roof cap ──
 // New section:   x (W-fWidth)→W, z fixedSideLen→D  (over the F wall)
 // Diagonal join: where dWidth ≠ fWidth, a triangle fills the gap at the inner corner.
@@ -640,10 +1118,10 @@ function buildLRoof(group, fixedSideLen, dWidth, fWidth, dRoofZ=fixedSideLen, fR
   // Roof is a constant-thickness slab with 5° runoff:
   // low at B/C/D side (z=0), high toward F side (higher z).
   const capBaseY = H_fixed + 0.001;
-  const t = 0.06;
+  const t = ROOF_CLADDING_THICKNESS;
   const capBaseYAtZ = z => capBaseY + z * ROOF_PITCH_TAN;
   const capTopYAtZ = z => capBaseYAtZ(z) + t;
-  const plyT = 0.017;
+  const plyT = CEILING_PLY_THICKNESS;
   const plyTopYAtZ = z => capBaseYAtZ(z);
   const plyBottomYAtZ = z => plyTopYAtZ(z) - plyT;
   const mat = claddingMat;
@@ -746,6 +1224,74 @@ function buildLRoof(group, fixedSideLen, dWidth, fWidth, dRoofZ=fixedSideLen, fR
     ));
     group.add(spanMesh);
   }
+}
+
+// ── Optional polycarbonate roof extension over the currently open area ──
+// Covers the non-roofed region (left of F roof segment) from z=fixedSideLen to z=D.
+// It is raised so E has ~150mm clearance at full height, and is supported by posts
+// that start on the existing roof line.
+function buildPolyRoofExtension(group, fixedSideLen, fWidth) {
+  if (!polyRoofEnabled) return;
+
+  const overlap = 0.20; // 200 mm lap over existing roof planes
+  const x0 = 0;
+  const x1 = THREE.MathUtils.clamp((W - fWidth) + overlap, 0, W);
+  const z0 = THREE.MathUtils.clamp(fixedSideLen - overlap, 0, D);
+  const z1 = D;
+  const spanX = x1 - x0;
+  const spanZ = z1 - z0;
+  if (spanX < 0.08 || spanZ < 0.08) return;
+
+  const roofTopYAtZ = z => (H_fixed + 0.001 + z * ROOF_PITCH_TAN + ROOF_CLADDING_THICKNESS);
+  const polyBottom0 = Math.max(H_adj + POLY_ROOF_CLEARANCE, roofTopYAtZ(z0) + 0.04);
+  const polyBottomAtZ = z => polyBottom0 + (z - z0) * ROOF_PITCH_TAN;
+  const polyBottom1 = polyBottomAtZ(z1);
+  const polyTop0 = polyBottom0 + POLY_ROOF_THICKNESS;
+  const polyTop1 = polyBottom1 + POLY_ROOF_THICKNESS;
+
+  const polyVerts = [
+    x0, polyTop0, z0,
+    x1, polyTop0, z0,
+    x1, polyTop1, z1,
+    x0, polyTop1, z1,
+    x0, polyBottom0, z0,
+    x1, polyBottom0, z0,
+    x1, polyBottom1, z1,
+    x0, polyBottom1, z1,
+  ];
+  const polyMesh = makeSolidSlab(polyRoofMat, polyVerts);
+  polyMesh.castShadow = true;
+  polyMesh.receiveShadow = true;
+  polyMesh.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(polyMesh.geometry),
+    new THREE.LineBasicMaterial({color:0x9fc8ea})
+  ));
+  group.add(polyMesh);
+
+  // Support posts from existing roof: three corner posts
+  // (front-left, front-right, and rear-right over F-roof section).
+  const postW = 0.05;
+  const postD = 0.05;
+  const edgePad = 0.03;
+  const pxL = x0 + edgePad;
+  const pxR = x1 - edgePad;
+  const pzF = z0 + edgePad;
+  const pzB = z1 - edgePad;
+  if (pxR <= pxL + 0.02 || pzB <= pzF + 0.02) return;
+
+  const placePost = (px, pz) => {
+    const postBottomY = roofTopYAtZ(pz);
+    const postTopY = polyBottomAtZ(pz);
+    const postH = postTopY - postBottomY;
+    if (postH <= 0.03) return;
+    const post = box(postW, postH, postD, polyRoofPostMat, 0, 0, 0, px, postBottomY + postH * 0.5, pz);
+    post.castShadow = true;
+    post.receiveShadow = true;
+    group.add(post);
+  };
+  placePost(pxL, pzF);
+  placePost(pxR, pzF);
+  placePost(pxR, pzB);
 }
 
 // Build a flat slab from 8 corners (top 4 then bottom 4, wound CCW from above)

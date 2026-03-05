@@ -11,8 +11,8 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x111111, 20, 40);
 
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-camera.position.set(8, 5, 9);
-camera.lookAt(2, 1.5, 1.5);
+camera.position.set(8, 5.6, 9);
+camera.lookAt(2, 1.8, 1.5);
 
 // Lights
 scene.add(new THREE.AmbientLight(0xffffff, 0.4));
@@ -38,12 +38,24 @@ const thick = 0.08;
 const KICK = 0.7;    // vertical kick height at base of all walls
 const ROOF_PITCH_DEG = 5;
 const ROOF_PITCH_TAN = Math.tan(THREE.MathUtils.degToRad(ROOF_PITCH_DEG));
+const ROOF_CLADDING_THICKNESS = 0.06;
+const CEILING_PLY_THICKNESS = 0.017;
+const POLY_ROOF_THICKNESS = 0.012;
+const POLY_ROOF_CLEARANCE = 0.15;
+const TRAINING_PULLUP_BAR_HEIGHT = 2.65;
+const TRAINING_HANGBOARD_TOP_HEIGHT = 2.55;
+const SON_HEIGHT = 1.33;
 const CRASH_MAT_THICKNESS = 0.30;
 
 const WALL_STATE_STORAGE_KEY = 'climbingWall.wallState.v1';
 const WALL_DEFAULT_STATE_STORAGE_KEY = 'climbingWall.defaultState.v1';
 const CAMERA_STATE_STORAGE_KEY = 'climbingWall.cameraState.v1';
 const CRASH_MATS_STORAGE_KEY = 'climbingWall.crashMats.v1';
+const POLY_ROOF_STORAGE_KEY = 'climbingWall.polyRoof.v1';
+const TRAINING_RIG_STORAGE_KEY = 'climbingWall.trainingRig.v1';
+const TRAINING_CABINET_STORAGE_KEY = 'climbingWall.trainingCabinet.v1';
+const CAMPUS_BOARD_STORAGE_KEY = 'climbingWall.campusBoard.v1';
+const CONCEPT_VOLUMES_STORAGE_KEY = 'climbingWall.conceptVolumes.v1';
 const WALL_STATE_LIMITS = {
   aAngle: [0, 60], aWidth: [0.3, 2.5],
   bAngle: [0, 60], bWidth: [0.3, 2.5],
@@ -52,6 +64,7 @@ const WALL_STATE_LIMITS = {
   eAngle: [-5, 60],
   f1Angle: [0, 40], f1Height: [2.0, 2.7], f1Width: [0.1, 1.0],
   f2Angle: [0, 75], f2WidthTop: [0.3, 4.0],
+  rigOpen: [0, 180],
 };
 
 const BUILTIN_DEFAULT_WALL_STATE = Object.freeze({
@@ -64,6 +77,7 @@ const BUILTIN_DEFAULT_WALL_STATE = Object.freeze({
   eAngle: 10,
   f1Angle: 20, f1Height: 2.0, f1Width: 1.0,
   f2Angle: 50, f2WidthTop: 1.3,
+  rigOpen: 180,
 });
 
 const BUILTIN_CAMERA_STATE = Object.freeze({
@@ -71,7 +85,7 @@ const BUILTIN_CAMERA_STATE = Object.freeze({
   phi: 0.55,
   radius: 12,
   targetX: 2,
-  targetY: 1.5,
+  targetY: 1.7,
   targetZ: 1.5,
 });
 
@@ -225,18 +239,28 @@ scene.add(hoverDimGroup);
 let hoverTargets = [];
 let scalePersonBillboard = null;
 let scalePersonMesh = null;
+let scalePersonCompanionBillboard = null;
+let scalePersonCompanionMesh = null;
 let crashMatsGroup = null;
 let crashMatsEnabled = readStoredBool(CRASH_MATS_STORAGE_KEY, false);
+let polyRoofEnabled = readStoredBool(POLY_ROOF_STORAGE_KEY, true);
+let trainingRigEnabled = readStoredBool(TRAINING_RIG_STORAGE_KEY, true);
+let trainingCabinetEnabled = readStoredBool(TRAINING_CABINET_STORAGE_KEY, true);
+let campusBoardEnabled = readStoredBool(CAMPUS_BOARD_STORAGE_KEY, true);
+let conceptVolumesEnabled = readStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, true);
 
 function getActiveFloorY() {
   return crashMatsEnabled ? CRASH_MAT_THICKNESS : 0;
 }
 
 function updateScalePersonFloorOffset() {
-  if (!scalePersonMesh || !scalePersonMesh.position) return;
-  const yOffset = Number(scalePersonMesh.userData?.personYOffset);
-  if (!Number.isFinite(yOffset)) return;
-  scalePersonMesh.position.y = getActiveFloorY() + yOffset;
+  const people = [scalePersonMesh, scalePersonCompanionMesh];
+  people.forEach(person => {
+    if (!person || !person.position) return;
+    const yOffset = Number(person.userData?.personYOffset);
+    if (!Number.isFinite(yOffset)) return;
+    person.position.y = getActiveFloorY() + yOffset;
+  });
 }
 
 function setCrashMatsEnabled(enabled) {
@@ -246,8 +270,53 @@ function setCrashMatsEnabled(enabled) {
   persistStoredBool(CRASH_MATS_STORAGE_KEY, crashMatsEnabled);
 }
 
+function setPolyRoofEnabled(enabled) {
+  polyRoofEnabled = !!enabled;
+  persistStoredBool(POLY_ROOF_STORAGE_KEY, polyRoofEnabled);
+  if (typeof rebuild === 'function') rebuild();
+}
+
+function setTrainingRigEnabled(enabled) {
+  trainingRigEnabled = !!enabled;
+  persistStoredBool(TRAINING_RIG_STORAGE_KEY, trainingRigEnabled);
+  if (typeof rebuild === 'function') rebuild();
+}
+
+function setTrainingCabinetEnabled(enabled) {
+  trainingCabinetEnabled = !!enabled;
+  persistStoredBool(TRAINING_CABINET_STORAGE_KEY, trainingCabinetEnabled);
+  if (typeof rebuild === 'function') rebuild();
+}
+
+function setCampusBoardEnabled(enabled) {
+  campusBoardEnabled = !!enabled;
+  persistStoredBool(CAMPUS_BOARD_STORAGE_KEY, campusBoardEnabled);
+  if (typeof rebuild === 'function') rebuild();
+}
+
+function setConceptVolumesEnabled(enabled) {
+  conceptVolumesEnabled = !!enabled;
+  persistStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, conceptVolumesEnabled);
+  if (typeof rebuild === 'function') rebuild();
+}
+
 // ── Materials ──
 const claddingMat = new THREE.MeshLambertMaterial({ color: 0x3d3d3d, side: THREE.DoubleSide });
+const polyRoofMat = new THREE.MeshLambertMaterial({
+  color: 0xbfd6ea,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.42
+});
+const polyRoofPostMat = new THREE.MeshLambertMaterial({ color: 0x7a8088, side: THREE.DoubleSide });
+const trainingFrameMat = new THREE.MeshLambertMaterial({ color: 0x6d737b, side: THREE.DoubleSide });
+const pullupBarMat = new THREE.MeshLambertMaterial({ color: 0xadb4bc, side: THREE.DoubleSide });
+const hangboardMat = new THREE.MeshLambertMaterial({ color: 0xc9b58b, side: THREE.DoubleSide });
+const hangboardSlotMat = new THREE.MeshLambertMaterial({ color: 0x8d7b59, side: THREE.DoubleSide });
+const campusRungMat = new THREE.MeshLambertMaterial({ color: 0xc6a476, side: THREE.DoubleSide });
+const campusRungEdgeMat = new THREE.LineBasicMaterial({color: 0x8d6f47});
+const conceptVolumeMat = new THREE.MeshLambertMaterial({ color: 0xb88f63, side: THREE.DoubleSide });
+const conceptVolumeEdgeMat = new THREE.LineBasicMaterial({color: 0x7e5f3f});
 
 function box(w, h, d, mat, rx=0,ry=0,rz=0, px=0,py=0,pz=0) {
   const g = new THREE.BoxGeometry(w,h,d), m = new THREE.Mesh(g,mat);
