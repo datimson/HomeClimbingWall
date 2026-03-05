@@ -35,7 +35,6 @@
     border-color: #5b5b5b;
   }
   .reactivate-camera-btn.is-hidden { display: none; }
-  .copy-camera-btn { top: 46px; }
   .hover-info {
     position: absolute;
     top: 14px;
@@ -275,7 +274,6 @@
       font-size: 0.62rem;
       padding: 6px 8px;
     }
-    .copy-camera-btn { top: auto; bottom: 90px; }
 
     .hover-info {
       top: 8px;
@@ -357,7 +355,6 @@
       font-size: 0.58rem;
       padding: 5px 7px;
     }
-    .copy-camera-btn { top: 38px; bottom: auto; }
     .panel h2 { margin-bottom: 10px; }
     .section, .section-collapsible { margin-bottom: 16px; }
   }

@@ -11,7 +11,6 @@ const hoverMouse = new THREE.Vector2();
 const hoverInfoEl = document.getElementById('hoverInfo');
 const saveStatusEl = document.getElementById('saveStatus');
 const reactivateCameraBtn = document.getElementById('reactivateCameraBtn');
-const copyCameraBtn = document.getElementById('copyCameraBtn');
 let activeHoverMesh = null;
 let dimsAreFaded = false;
 let sceneIsFaded = false;
@@ -36,57 +35,6 @@ function getCurrentCameraState() {
 function persistCurrentCameraState() {
   if (typeof saveCameraState !== 'function') return false;
   return saveCameraState(getCurrentCameraState());
-}
-
-function buildCameraPosePayload() {
-  const camPos = camera?.position || {x: 0, y: 0, z: 0};
-  const n = v => Number(v.toFixed(6));
-  return {
-    state: {
-      theta: n(theta),
-      phi: n(phi),
-      radius: n(radius),
-      targetX: n(targetX),
-      targetY: n(targetY),
-      targetZ: n(targetZ),
-    },
-    cameraPosition: {
-      x: n(camPos.x),
-      y: n(camPos.y),
-      z: n(camPos.z),
-    },
-    lookAt: {
-      x: n(targetX),
-      y: n(targetY),
-      z: n(targetZ),
-    },
-  };
-}
-
-async function copyTextToClipboard(text) {
-  if (!text) return false;
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (_) {}
-
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.top = '-1000px';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    if (ok) return true;
-  } catch (_) {}
-  return false;
 }
 
 const INTRO_DELAY_MS = 1300;
@@ -473,7 +421,6 @@ showSaveStatus.timer = null;
 function handleIntroCancelInteraction(e) {
   if (!introAnim.active) return;
   if (reactivateCameraBtn && (e.target === reactivateCameraBtn || reactivateCameraBtn.contains(e.target))) return;
-  if (copyCameraBtn && (e.target === copyCameraBtn || copyCameraBtn.contains(e.target))) return;
   stopIntroAnimation({restoreStart: false});
 }
 
@@ -486,22 +433,6 @@ if (reactivateCameraBtn) {
     e.preventDefault();
     e.stopPropagation();
     startIntroAnimation(true);
-  });
-}
-
-if (copyCameraBtn) {
-  copyCameraBtn.addEventListener('click', async e => {
-    e.preventDefault();
-    e.stopPropagation();
-    const payload = buildCameraPosePayload();
-    const json = JSON.stringify(payload, null, 2);
-    const copied = await copyTextToClipboard(json);
-    if (copied) {
-      showSaveStatus('Camera pose copied');
-      return;
-    }
-    window.prompt('Copy camera pose JSON:', json);
-    showSaveStatus('Camera pose ready');
   });
 }
 
