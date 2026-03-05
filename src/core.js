@@ -78,25 +78,25 @@ const WALL_STATE_LIMITS = {
 };
 
 const BUILTIN_DEFAULT_WALL_STATE = Object.freeze({
-  aAngle: 20, aWidth: 1.5,
-  bAngle: 20,  bWidth: 1.1,
-  cAngle: 20, cWidth: 1.6,
-  dAngle: 10,
-  d1Height: 2.0,
-  d2Angle: 10,
-  eAngle: 10,
-  f1Angle: 20, f1Height: 2.0, f1Width: 1.0,
-  f2Angle: 50, f2WidthTop: 1.3,
-  rigOpen: 180,
+  aAngle: 10, aWidth: 1.35,
+  bAngle: 10,  bWidth: 1.35,
+  cAngle: 10, cWidth: 1.3,
+  dAngle: 15,
+  d1Height: 2.2,
+  d2Angle: 15,
+  eAngle: 5,
+  f1Angle: 10, f1Height: 2.2, f1Width: 1.0,
+  f2Angle: 25, f2WidthTop: 1.35,
+  rigOpen: 0,
 });
 
 const BUILTIN_CAMERA_STATE = Object.freeze({
-  theta: 0.9,
-  phi: 0.55,
-  radius: 12,
-  targetX: 2,
-  targetY: 1.7,
-  targetZ: 1.5,
+  theta: 1.6149999999999223,
+  phi: 1.5549999999999955,
+  radius: 8,
+  targetX: 1.5855297326831634,
+  targetY: 1.8377161702177802,
+  targetZ: 1.9091334261437647,
 });
 
 function clampWallStateValue(key, value) {
@@ -252,7 +252,7 @@ let scalePersonMesh = null;
 let scalePersonCompanionBillboard = null;
 let scalePersonCompanionMesh = null;
 let crashMatsGroup = null;
-let crashMatsEnabled = readStoredBool(CRASH_MATS_STORAGE_KEY, false);
+let crashMatsEnabled = readStoredBool(CRASH_MATS_STORAGE_KEY, true);
 let polyRoofEnabled = readStoredBool(POLY_ROOF_STORAGE_KEY, true);
 let trainingRigEnabled = readStoredBool(TRAINING_RIG_STORAGE_KEY, true);
 let trainingCabinetEnabled = readStoredBool(TRAINING_CABINET_STORAGE_KEY, true);
