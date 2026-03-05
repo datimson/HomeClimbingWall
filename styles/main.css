@@ -35,14 +35,32 @@
     border-color: #5b5b5b;
   }
   .reactivate-camera-btn.is-hidden { display: none; }
-  #enterVrBtn {
-    position: absolute !important;
-    right: 12px !important;
-    left: auto !important;
-    top: auto !important;
-    bottom: 12px !important;
-    z-index: 24 !important;
+  .enter-vr-btn {
+    position: absolute;
+    right: 12px;
+    left: auto;
+    top: auto;
+    bottom: 12px;
+    z-index: 24;
+    border: 1px solid #3f3f3f;
+    border-radius: 4px;
+    padding: 7px 10px;
+    background: rgba(20, 20, 20, 0.88);
+    color: #d8d0c3;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
   }
+  .enter-vr-btn:hover {
+    background: rgba(32, 32, 32, 0.9);
+    border-color: #5b5b5b;
+  }
+  .enter-vr-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .enter-vr-btn.is-hidden { display: none; }
   .hover-info {
     position: absolute;
     top: 14px;
@@ -282,9 +300,11 @@
       font-size: 0.62rem;
       padding: 6px 8px;
     }
-    #enterVrBtn {
-      right: 8px !important;
-      bottom: 8px !important;
+    .enter-vr-btn {
+      right: 8px;
+      bottom: 8px;
+      font-size: 0.62rem;
+      padding: 6px 8px;
     }
 
     .hover-info {
@@ -367,9 +387,11 @@
       font-size: 0.58rem;
       padding: 5px 7px;
     }
-    #enterVrBtn {
-      right: 8px !important;
-      bottom: 8px !important;
+    .enter-vr-btn {
+      right: 8px;
+      bottom: 8px;
+      font-size: 0.58rem;
+      padding: 5px 7px;
     }
     .panel h2 { margin-bottom: 10px; }
     .section, .section-collapsible { margin-bottom: 16px; }

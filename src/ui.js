@@ -11,6 +11,7 @@ const hoverMouse = new THREE.Vector2();
 const hoverInfoEl = document.getElementById('hoverInfo');
 const saveStatusEl = document.getElementById('saveStatus');
 const reactivateCameraBtn = document.getElementById('reactivateCameraBtn');
+const enterVrBtn = document.getElementById('enterVrBtn');
 let activeHoverMesh = null;
 let dimsAreFaded = false;
 let sceneIsFaded = false;
@@ -40,13 +41,51 @@ function persistCurrentCameraState() {
 const XR_FLOOR_EYE_HEIGHT = 1.72;
 const XR_MOVE_SPEED_MPS = 1.9;
 const XR_STICK_DEADZONE = 0.16;
+const XR_SESSION_OPTIONS = Object.freeze({
+  optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+});
 let xrSessionActive = false;
 let xrLastFrameTs = 0;
 let xrRestoreCameraState = null;
+let xrSupportChecked = false;
+let xrSupported = false;
+let xrSessionRequestInFlight = false;
 const xrForward = new THREE.Vector3();
 const xrRight = new THREE.Vector3();
 const xrMoveDelta = new THREE.Vector3();
 const xrUp = new THREE.Vector3(0, 1, 0);
+
+function setVrButtonState() {
+  if (!enterVrBtn) return;
+  const show = xrSupportChecked && xrSupported;
+  enterVrBtn.classList.toggle('is-hidden', !show);
+  enterVrBtn.disabled = !!xrSessionRequestInFlight;
+  enterVrBtn.textContent = xrSessionActive ? 'Exit VR' : 'Enter VR';
+}
+
+async function detectVrSupport() {
+  if (!enterVrBtn) return false;
+  if (!renderer?.xr || !('xr' in navigator) || !navigator.xr?.requestSession) {
+    xrSupportChecked = true;
+    xrSupported = false;
+    setVrButtonState();
+    return false;
+  }
+  if (!navigator.xr.isSessionSupported) {
+    xrSupportChecked = true;
+    xrSupported = true;
+    setVrButtonState();
+    return true;
+  }
+  try {
+    xrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+  } catch (_) {
+    xrSupported = false;
+  }
+  xrSupportChecked = true;
+  setVrButtonState();
+  return xrSupported;
+}
 
 function applyStickDeadzone(value) {
   const v = Number(value) || 0;
@@ -107,19 +146,37 @@ function setupWebXR() {
   renderer.xr.addEventListener('sessionstart', () => {
     xrSessionActive = true;
     beginVrSession();
+    setVrButtonState();
   });
   renderer.xr.addEventListener('sessionend', () => {
     xrSessionActive = false;
     endVrSession();
+    setVrButtonState();
   });
-  if (!THREE.VRButton) return;
-
-  const vrButton = THREE.VRButton.createButton(renderer, {
-    optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+  detectVrSupport();
+  if (!enterVrBtn) return;
+  enterVrBtn.addEventListener('click', async e => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!xrSupportChecked) await detectVrSupport();
+    if (!xrSupported || xrSessionRequestInFlight) return;
+    try {
+      xrSessionRequestInFlight = true;
+      setVrButtonState();
+      if (xrSessionActive) {
+        const active = renderer.xr.getSession();
+        if (active) await active.end();
+        return;
+      }
+      const session = await navigator.xr.requestSession('immersive-vr', XR_SESSION_OPTIONS);
+      await renderer.xr.setSession(session);
+    } catch (err) {
+      console.warn('VR session request failed:', err);
+    } finally {
+      xrSessionRequestInFlight = false;
+      setVrButtonState();
+    }
   });
-  if (!vrButton) return;
-  vrButton.id = 'enterVrBtn';
-  wrap.appendChild(vrButton);
 }
 
 function updateVrLocomotion(now) {
