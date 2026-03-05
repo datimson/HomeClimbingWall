@@ -954,11 +954,13 @@ function buildTrainingRig(group, s) {
     cabinet.add(new THREE.LineSegments(new THREE.EdgesGeometry(cabinet.geometry), new THREE.LineBasicMaterial({color:0x738392})));
     group.add(cabinet);
 
+    const cabDoorDepth = 0.02;
+    const cabDoorGap = 0.002;
     const cabDoor = box(
-      cabW - 0.04, cabH - 0.04, 0.02,
+      cabW - 0.04, cabH - 0.04, cabDoorDepth,
       new THREE.MeshLambertMaterial({color:0x5a6570}),
       0, 0, 0,
-      xCenter, cabBottom + cabH * 0.5, D + cabDepth + 0.01
+      xCenter, cabBottom + cabH * 0.5, D + cabDepth + 0.01 + (cabDoorDepth * 0.5) + cabDoorGap
     );
     cabDoor.castShadow = true;
     cabDoor.receiveShadow = true;
@@ -1045,7 +1047,8 @@ function buildTrainingRig(group, s) {
   for (let i = 0; i < slotCount; i++) {
     const t = slotCount === 1 ? 0 : (i / (slotCount - 1) - 0.5);
     const x = midXLocal + t * slotSpan;
-    const slotZ = boardZLocal + hangSide * (boardT * 0.5 + 0.006);
+    // Keep slot geometry slightly embedded into the board to avoid coplanar shimmer.
+    const slotZ = boardZLocal + hangSide * (boardT * 0.5 + 0.004);
     const slot = box(slotW, 0.03, 0.012, hangboardSlotMat, 0, 0, 0, x, boardY - 0.03, slotZ);
     slot.castShadow = true;
     slot.receiveShadow = true;
@@ -1349,4 +1352,104 @@ function buildAdjPanel(group, adjLen, fixedSideLen) {
 
 function setAdjAngle(deg) {
   if (adjPivot) adjPivot.rotation.z = -deg * Math.PI / 180;
+}
+
+// Visual guide: seam where A and B meet.
+// Draws from floor corner through kick and up the A/B intersection profile.
+function buildABCornerGuide(group, s, fixedSideLen) {
+  if (!group || !s) return;
+
+  const roofBackY = roofUnderY(0);
+  const roofEdgeY = roofUnderY(fixedSideLen);
+  const hBase = Math.max(0, roofBackY - KICK);
+  const hEdge = Math.max(0, roofEdgeY - KICK);
+
+  const aRad = THREE.MathUtils.degToRad(Number(s.aAngle) || 0);
+  const bRad = THREE.MathUtils.degToRad(Number(s.bAngle) || 0);
+  const tanA = Math.tan(aRad);
+  const tanB = Math.tan(bRad);
+
+  const xProfile = (() => {
+    if (Math.abs(tanA) < 1e-8) {
+      return { hTop: hEdge, hSplit: null, at: () => 0 };
+    }
+    const singleTopX = hEdge * tanA;
+    if (singleTopX <= fixedSideLen + 0.005) {
+      return { hTop: hEdge, hSplit: null, at: h => Math.max(0, h) * tanA };
+    }
+    const tanA2 = Math.tan(aRad * 0.5);
+    const denom = tanA - tanA2;
+    if (Math.abs(denom) < 1e-8) {
+      return { hTop: hEdge, hSplit: null, at: h => Math.max(0, h) * tanA };
+    }
+    let h1 = (fixedSideLen - hEdge * tanA2) / denom;
+    h1 = Math.max(0.1, Math.min(hEdge * 0.9, h1));
+    const splitX = h1 * tanA;
+    return {
+      hTop: hEdge,
+      hSplit: h1,
+      at: h => {
+        const hh = Math.max(0, h);
+        if (hh <= h1) return hh * tanA;
+        return splitX + (hh - h1) * tanA2;
+      },
+    };
+  })();
+
+  const zProfile = (() => {
+    if (Math.abs(tanB) < 1e-8) {
+      return { hTop: hBase, hSplit: null, at: () => 0 };
+    }
+    const singleDen = Math.max(0.05, 1 - ROOF_PITCH_TAN * tanB);
+    const singleH = hBase / singleDen;
+    const singleTopZ = singleH * tanB;
+    if (singleTopZ <= fixedSideLen + 0.005) {
+      return { hTop: singleH, hSplit: null, at: h => Math.max(0, h) * tanB };
+    }
+    const tanB2 = Math.tan(bRad * 0.5);
+    const denom = tanB - tanB2;
+    if (Math.abs(denom) < 1e-8) {
+      return { hTop: hEdge, hSplit: null, at: h => Math.max(0, h) * tanB };
+    }
+    let h1 = (fixedSideLen - hEdge * tanB2) / denom;
+    h1 = Math.max(0.1, Math.min(hEdge * 0.9, h1));
+    const splitZ = h1 * tanB;
+    return {
+      hTop: hEdge,
+      hSplit: h1,
+      at: h => {
+        const hh = Math.max(0, h);
+        if (hh <= h1) return hh * tanB;
+        return splitZ + (hh - h1) * tanB2;
+      },
+    };
+  })();
+
+  const hTop = Math.max(0, Math.min(xProfile.hTop, zProfile.hTop));
+  const pts = [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, KICK, 0),
+  ];
+
+  const knotSet = new Set([0, hTop]);
+  if (Number.isFinite(xProfile.hSplit)) knotSet.add(xProfile.hSplit.toFixed(6));
+  if (Number.isFinite(zProfile.hSplit)) knotSet.add(zProfile.hSplit.toFixed(6));
+  const knots = Array.from(knotSet)
+    .map(v => Number(v))
+    .filter(v => Number.isFinite(v) && v >= 0 && v <= hTop)
+    .sort((a, b) => a - b);
+
+  knots.forEach(h => {
+    pts.push(new THREE.Vector3(
+      xProfile.at(h),
+      KICK + h,
+      zProfile.at(h)
+    ));
+  });
+
+  const seamGeo = new THREE.BufferGeometry().setFromPoints(pts);
+  const seamMat = new THREE.LineBasicMaterial({ color: 0x88cc66 });
+  const seam = new THREE.Line(seamGeo, seamMat);
+  seam.userData.isABCornerGuide = true;
+  group.add(seam);
 }

@@ -57,6 +57,7 @@ function rebuild() {
 
   // ── Adjustable panel ──
   buildAdjPanel(wallGroup, adjLen, fixedSideLen);
+  buildABCornerGuide(wallGroup, s, fixedSideLen);
 
   // ── Labels ──
   function findWallLabelMesh(wallId) {
