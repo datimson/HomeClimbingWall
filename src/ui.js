@@ -18,6 +18,10 @@ let sceneIsFaded = false;
 let focusedMaterialEntries = [];
 let activeFocusMesh = null;
 const personLookAtTarget = new THREE.Vector3();
+const xrRig = new THREE.Group();
+xrRig.name = 'xrRig';
+scene.add(xrRig);
+xrRig.add(camera);
 
 const initialCameraState = (typeof loadCameraState === 'function') ? loadCameraState() : null;
 if (initialCameraState) {
@@ -41,19 +45,60 @@ function persistCurrentCameraState() {
 const XR_FLOOR_EYE_HEIGHT = 1.72;
 const XR_MOVE_SPEED_MPS = 1.9;
 const XR_STICK_DEADZONE = 0.16;
+const XR_TELEPORT_MAX_DISTANCE = 20;
+const XR_TELEPORT_SURFACE_EPS = 0.012;
+const XR_RAY_COLOR_IDLE = 0xb8dfff;
+const XR_RAY_COLOR_TELEPORT = 0x4dc7ff;
+const XR_RAY_COLOR_INTERACTIVE = 0xffc86a;
 const XR_SESSION_OPTIONS = Object.freeze({
   optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
 });
 let xrSessionActive = false;
-let xrLastFrameTs = 0;
 let xrRestoreCameraState = null;
 let xrSupportChecked = false;
 let xrSupported = false;
 let xrSessionRequestInFlight = false;
+const xrControllers = [];
+let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
 const xrRight = new THREE.Vector3();
 const xrMoveDelta = new THREE.Vector3();
 const xrUp = new THREE.Vector3(0, 1, 0);
+const xrRayOrigin = new THREE.Vector3();
+const xrRayDir = new THREE.Vector3();
+const xrRaycastHit = new THREE.Vector3();
+const xrHeadWorld = new THREE.Vector3();
+const xrRayPlane = new THREE.Plane();
+const xrRay = new THREE.Ray();
+const xrRayMatrix = new THREE.Matrix4();
+const xrRaycaster = new THREE.Raycaster();
+const eSweepAnim = {
+  active: false,
+  speedDegPerSec: 16,
+  dir: 1,
+  minDeg: -5,
+  maxDeg: 60,
+};
+const rigToggleAnim = {
+  targetDeg: null,
+  speedDegPerSec: 150,
+  rebuildStepDeg: 0.8,
+  lastRebuildDeg: NaN,
+};
+const xrTeleportMarker = new THREE.Mesh(
+  new THREE.RingGeometry(0.14, 0.20, 40),
+  new THREE.MeshBasicMaterial({
+    color: 0x4dc7ff,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: false,
+    depthWrite: false,
+  })
+);
+xrTeleportMarker.rotation.x = -Math.PI * 0.5;
+xrTeleportMarker.visible = false;
+scene.add(xrTeleportMarker);
 
 function setVrButtonState() {
   if (!enterVrBtn) return;
@@ -108,14 +153,226 @@ function readPrimaryStick(inputSource) {
 
 function getVrMoveAxes(session) {
   if (!session?.inputSources) return {x: 0, y: 0};
+  let leftStick = null;
   let fallback = null;
+  let fallbackMag = 0;
   for (const source of session.inputSources) {
     if (!source?.gamepad) continue;
     const stick = readPrimaryStick(source);
-    if (source.handedness === 'left') return stick;
-    if (!fallback) fallback = stick;
+    const mag = Math.hypot(stick.x, stick.y);
+    if (source.handedness === 'left') {
+      leftStick = {x: stick.x, y: stick.y, mag};
+      continue;
+    }
+    if (mag > fallbackMag) {
+      fallback = stick;
+      fallbackMag = mag;
+    }
+  }
+  if (leftStick && leftStick.mag > XR_STICK_DEADZONE * 0.45) {
+    return {x: leftStick.x, y: leftStick.y};
   }
   return fallback || {x: 0, y: 0};
+}
+
+function makeVrControllerRay() {
+  const geom = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  ]);
+  const mat = new THREE.LineBasicMaterial({
+    color: XR_RAY_COLOR_IDLE,
+    transparent: true,
+    opacity: 0.95,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const line = new THREE.Line(geom, mat);
+  line.name = 'xrRay';
+  line.visible = false;
+  line.scale.z = XR_TELEPORT_MAX_DISTANCE;
+  line.renderOrder = 999;
+  line.frustumCulled = false;
+  return line;
+}
+
+function setVrControllerRayStyle(state, distance, colorHex) {
+  if (!state?.rayLine) return;
+  const d = THREE.MathUtils.clamp(Number(distance) || XR_TELEPORT_MAX_DISTANCE, 0.06, XR_TELEPORT_MAX_DISTANCE);
+  state.rayLine.scale.z = d;
+  if (state.rayLine.material?.color) state.rayLine.material.color.setHex(colorHex);
+  state.rayLine.visible = xrSessionActive && !!state.connected;
+}
+
+function updateVrControllerConnection(state, connected, data=null) {
+  if (!state) return;
+  state.connected = !!connected;
+  state.handedness = data?.handedness || 'none';
+  state.inputSource = data || null;
+  state.interactiveHit = null;
+  state.floorHit = null;
+  if (state.rayLine) state.rayLine.visible = xrSessionActive && state.connected;
+}
+
+function ensureVrControllers() {
+  if (xrControllersReady || !renderer?.xr) return;
+  xrControllersReady = true;
+  const makeState = index => {
+    const controller = renderer.xr.getController(index);
+    const rayLine = makeVrControllerRay();
+    controller.add(rayLine);
+    const state = {
+      index,
+      controller,
+      rayLine,
+      connected: false,
+      handedness: 'none',
+      inputSource: null,
+      interactiveHit: null,
+      floorHit: null,
+    };
+    controller.addEventListener('connected', ev => {
+      updateVrControllerConnection(state, true, ev?.data || null);
+    });
+    controller.addEventListener('disconnected', () => {
+      updateVrControllerConnection(state, false, null);
+    });
+    controller.addEventListener('selectend', onVrControllerSelectEnd);
+    scene.add(controller);
+    xrControllers.push(state);
+  };
+  makeState(0);
+  makeState(1);
+}
+
+function readControllerWorldRay(controller) {
+  if (!controller) return false;
+  controller.updateMatrixWorld(true);
+  xrRayOrigin.setFromMatrixPosition(controller.matrixWorld);
+  xrRayMatrix.extractRotation(controller.matrixWorld);
+  xrRayDir.set(0, 0, -1).applyMatrix4(xrRayMatrix).normalize();
+  return Number.isFinite(xrRayDir.x) && Number.isFinite(xrRayDir.y) && Number.isFinite(xrRayDir.z);
+}
+
+function getVrInteractiveHit() {
+  if (!Array.isArray(hoverTargets) || !hoverTargets.length) return null;
+  xrRaycaster.far = XR_TELEPORT_MAX_DISTANCE;
+  xrRaycaster.set(xrRayOrigin, xrRayDir);
+  const hits = xrRaycaster.intersectObjects(hoverTargets, false);
+  return hits.find(h => h?.object?.userData?.sectionInfo) || null;
+}
+
+function getVrFloorHit(maxDistance=XR_TELEPORT_MAX_DISTANCE) {
+  const maxDist = THREE.MathUtils.clamp(Number(maxDistance) || XR_TELEPORT_MAX_DISTANCE, 0.06, XR_TELEPORT_MAX_DISTANCE);
+  xrRayPlane.set(xrUp, -getActiveFloorY());
+  xrRay.origin.copy(xrRayOrigin);
+  xrRay.direction.copy(xrRayDir);
+  const hit = xrRay.intersectPlane(xrRayPlane, xrRaycastHit);
+  if (!hit) return null;
+  const distance = xrRayOrigin.distanceTo(hit);
+  if (!Number.isFinite(distance) || distance < 0.06 || distance > maxDist) return null;
+  return {point: hit.clone(), distance};
+}
+
+function teleportVrTo(targetPoint) {
+  if (!xrSessionActive || !targetPoint) return false;
+  const xrCam = renderer.xr.getCamera(camera);
+  xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
+  xrRig.position.x += targetPoint.x - xrHeadWorld.x;
+  xrRig.position.z += targetPoint.z - xrHeadWorld.z;
+  xrRig.position.y = getActiveFloorY() + XR_FLOOR_EYE_HEIGHT;
+  targetX = xrRig.position.x;
+  targetY = xrRig.position.y;
+  targetZ = xrRig.position.z;
+  return true;
+}
+
+function toggleEWallSweep() {
+  const curr = THREE.MathUtils.clamp(Number(wallState.eAngle) || 0, eSweepAnim.minDeg, eSweepAnim.maxDeg);
+  if (curr >= eSweepAnim.maxDeg - 0.05) eSweepAnim.dir = -1;
+  else if (curr <= eSweepAnim.minDeg + 0.05) eSweepAnim.dir = 1;
+  eSweepAnim.active = !eSweepAnim.active;
+}
+
+function toggleTrainingRigOpenClose() {
+  const basis = Number.isFinite(rigToggleAnim.targetDeg)
+    ? rigToggleAnim.targetDeg
+    : THREE.MathUtils.clamp(Number(wallState.rigOpen) || 0, 0, 180);
+  rigToggleAnim.targetDeg = basis >= 90 ? 0 : 180;
+  rigToggleAnim.lastRebuildDeg = NaN;
+}
+
+function handleVrInteractiveClick(hit) {
+  const info = hit?.object?.userData?.sectionInfo;
+  if (!info) return false;
+  if (info.wall === 'E') {
+    toggleEWallSweep();
+    return true;
+  }
+  if (info.hoverKind === 'trainingRig' || info.wall === 'R') {
+    toggleTrainingRigOpenClose();
+    return true;
+  }
+  return false;
+}
+
+function onVrControllerSelectEnd(event) {
+  if (!xrSessionActive) return;
+  const state = xrControllers.find(s => s.controller === event?.target);
+  const controller = state?.controller || event?.target;
+  if (!controller || !readControllerWorldRay(controller)) return;
+  const interactiveHit = getVrInteractiveHit();
+  if (handleVrInteractiveClick(interactiveHit)) return;
+  const maxFloorDist = interactiveHit ? Math.max(0.06, interactiveHit.distance - 0.02) : XR_TELEPORT_MAX_DISTANCE;
+  const floorHit = getVrFloorHit(maxFloorDist);
+  if (floorHit) teleportVrTo(floorHit.point);
+}
+
+function updateVrControllerPointers() {
+  if (!xrSessionActive) {
+    xrTeleportMarker.visible = false;
+    xrControllers.forEach(state => {
+      if (state?.rayLine) state.rayLine.visible = false;
+    });
+    return;
+  }
+
+  let bestTeleport = null;
+  let bestTeleportDist = Infinity;
+  xrControllers.forEach(state => {
+    if (!state?.controller || !state?.rayLine || !state.connected || !readControllerWorldRay(state.controller)) {
+      if (state?.rayLine) state.rayLine.visible = false;
+      return;
+    }
+    const interactiveHit = getVrInteractiveHit();
+    const maxFloorDist = interactiveHit ? Math.max(0.06, interactiveHit.distance - 0.02) : XR_TELEPORT_MAX_DISTANCE;
+    const floorHit = getVrFloorHit(maxFloorDist);
+    state.interactiveHit = interactiveHit;
+    state.floorHit = floorHit;
+
+    let color = XR_RAY_COLOR_IDLE;
+    let lineDistance = XR_TELEPORT_MAX_DISTANCE;
+    if (interactiveHit) {
+      color = XR_RAY_COLOR_INTERACTIVE;
+      lineDistance = interactiveHit.distance;
+    } else if (floorHit) {
+      color = XR_RAY_COLOR_TELEPORT;
+      lineDistance = floorHit.distance;
+      if (floorHit.distance < bestTeleportDist) {
+        bestTeleportDist = floorHit.distance;
+        bestTeleport = floorHit.point;
+      }
+    }
+    setVrControllerRayStyle(state, lineDistance, color);
+  });
+
+  if (bestTeleport) {
+    xrTeleportMarker.visible = true;
+    xrTeleportMarker.position.copy(bestTeleport);
+    xrTeleportMarker.position.y = getActiveFloorY() + XR_TELEPORT_SURFACE_EPS;
+  } else {
+    xrTeleportMarker.visible = false;
+  }
 }
 
 function beginVrSession() {
@@ -129,11 +386,32 @@ function beginVrSession() {
   targetX = W * 0.5;
   targetY = getActiveFloorY() + XR_FLOOR_EYE_HEIGHT;
   targetZ = D * 0.72;
-  xrLastFrameTs = performance.now();
+  xrRig.position.set(targetX, targetY, targetZ);
+  xrRig.rotation.set(0, 0, 0);
+  eSweepAnim.active = false;
+  rigToggleAnim.targetDeg = null;
+  rigToggleAnim.lastRebuildDeg = NaN;
+  xrTeleportMarker.visible = false;
+  xrControllers.forEach(state => {
+    state.interactiveHit = null;
+    state.floorHit = null;
+    if (state.rayLine) state.rayLine.visible = !!state.connected;
+  });
 }
 
 function endVrSession() {
   hideHoverInfo();
+  xrTeleportMarker.visible = false;
+  xrControllers.forEach(state => {
+    state.interactiveHit = null;
+    state.floorHit = null;
+    if (state.rayLine) state.rayLine.visible = false;
+  });
+  eSweepAnim.active = false;
+  rigToggleAnim.targetDeg = null;
+  rigToggleAnim.lastRebuildDeg = NaN;
+  xrRig.position.set(0, 0, 0);
+  xrRig.rotation.set(0, 0, 0);
   if (xrRestoreCameraState) {
     applyCameraState(xrRestoreCameraState);
     xrRestoreCameraState = null;
@@ -143,6 +421,7 @@ function endVrSession() {
 function setupWebXR() {
   if (!renderer?.xr) return;
   renderer.xr.enabled = true;
+  ensureVrControllers();
   renderer.xr.addEventListener('sessionstart', () => {
     xrSessionActive = true;
     beginVrSession();
@@ -179,21 +458,24 @@ function setupWebXR() {
   });
 }
 
-function updateVrLocomotion(now) {
+function updateVrLocomotion(dtSeconds) {
   if (!xrSessionActive) return;
   const session = renderer.xr.getSession();
   if (!session) return;
+  const dt = THREE.MathUtils.clamp(Number(dtSeconds) || (1 / 60), 0.001, 0.05);
 
-  const ts = Number.isFinite(now) ? now : performance.now();
-  const dt = xrLastFrameTs > 0
-    ? THREE.MathUtils.clamp((ts - xrLastFrameTs) / 1000, 0.001, 0.05)
-    : 1 / 60;
-  xrLastFrameTs = ts;
+  const desiredY = getActiveFloorY() + XR_FLOOR_EYE_HEIGHT;
+  if (Math.abs(xrRig.position.y - desiredY) > 1e-6) xrRig.position.y = desiredY;
 
   const axes = getVrMoveAxes(session);
   const moveX = applyStickDeadzone(axes.x);
   const moveY = applyStickDeadzone(axes.y);
-  if (Math.abs(moveX) < 1e-4 && Math.abs(moveY) < 1e-4) return;
+  if (Math.abs(moveX) < 1e-4 && Math.abs(moveY) < 1e-4) {
+    targetX = xrRig.position.x;
+    targetY = xrRig.position.y;
+    targetZ = xrRig.position.z;
+    return;
+  }
 
   const xrCam = renderer.xr.getCamera(camera);
   xrCam.getWorldDirection(xrForward);
@@ -212,8 +494,11 @@ function updateVrLocomotion(now) {
   if (moveLen > 1) xrMoveDelta.multiplyScalar(1 / moveLen);
   xrMoveDelta.multiplyScalar(XR_MOVE_SPEED_MPS * dt);
 
-  targetX += xrMoveDelta.x;
-  targetZ += xrMoveDelta.z;
+  xrRig.position.x += xrMoveDelta.x;
+  xrRig.position.z += xrMoveDelta.z;
+  targetX = xrRig.position.x;
+  targetY = xrRig.position.y;
+  targetZ = xrRig.position.z;
 }
 
 const INTRO_DELAY_MS = 1300;
@@ -319,6 +604,46 @@ function setEAngleValue(deg) {
   return clamped;
 }
 
+function updateInteractiveAnimations(dtSeconds) {
+  if (introAnim.active) return;
+  const dt = THREE.MathUtils.clamp(Number(dtSeconds) || 0, 0, 0.08);
+  if (dt <= 0) return;
+
+  if (eSweepAnim.active) {
+    let next = (Number(wallState.eAngle) || 0) + (eSweepAnim.dir * eSweepAnim.speedDegPerSec * dt);
+    if (next >= eSweepAnim.maxDeg) {
+      next = eSweepAnim.maxDeg;
+      eSweepAnim.dir = -1;
+    } else if (next <= eSweepAnim.minDeg) {
+      next = eSweepAnim.minDeg;
+      eSweepAnim.dir = 1;
+    }
+    setEAngleValue(next);
+  }
+
+  if (Number.isFinite(rigToggleAnim.targetDeg)) {
+    const current = THREE.MathUtils.clamp(Number(wallState.rigOpen) || 0, 0, 180);
+    const target = THREE.MathUtils.clamp(Number(rigToggleAnim.targetDeg) || 0, 0, 180);
+    const delta = target - current;
+    if (Math.abs(delta) <= 0.15) {
+      setRigOpenValue(target, true);
+      rigToggleAnim.targetDeg = null;
+      rigToggleAnim.lastRebuildDeg = NaN;
+    } else {
+      const step = Math.sign(delta) * Math.min(Math.abs(delta), rigToggleAnim.speedDegPerSec * dt);
+      const next = current + step;
+      const nearTarget = Math.abs(target - next) <= 0.15;
+      const needsRebuild = (
+        !Number.isFinite(rigToggleAnim.lastRebuildDeg) ||
+        Math.abs(next - rigToggleAnim.lastRebuildDeg) >= rigToggleAnim.rebuildStepDeg ||
+        nearTarget
+      );
+      setRigOpenValue(next, needsRebuild);
+      if (needsRebuild) rigToggleAnim.lastRebuildDeg = next;
+    }
+  }
+}
+
 function stopIntroAnimation({restoreStart=false} = {}) {
   if (!introAnim.active) return;
   introAnim.active = false;
@@ -408,6 +733,9 @@ function updateIntroAnimation(now) {
 }
 
 function startIntroAnimation(fromSavedState=true) {
+  eSweepAnim.active = false;
+  rigToggleAnim.targetDeg = null;
+  rigToggleAnim.lastRebuildDeg = NaN;
   const startKeyframe = INTRO_KEYFRAMES[0];
   const startCam = startKeyframe?.state || (
     fromSavedState && typeof loadCameraState === 'function'
@@ -729,6 +1057,11 @@ function bindSlider(id, labelId, stateKey, fmt, triggerRebuild) {
   el.addEventListener('input', () => {
     const v = parseFloat(el.value);
     wallState[stateKey] = v;
+    if (stateKey === 'eAngle') eSweepAnim.active = false;
+    if (stateKey === 'rigOpen') {
+      rigToggleAnim.targetDeg = null;
+      rigToggleAnim.lastRebuildDeg = NaN;
+    }
     if (lbl) lbl.textContent = fmt(v);
     if (triggerRebuild) rebuild();
     else setAdjAngle(wallState.eAngle);
@@ -890,11 +1223,17 @@ window.addEventListener('resize', resize);
 resize();
 
 // Animate
+let lastAnimateTs = 0;
 function animate(now) {
   const ts = Number.isFinite(now) ? now : performance.now();
+  const dt = lastAnimateTs > 0
+    ? THREE.MathUtils.clamp((ts - lastAnimateTs) / 1000, 0.001, 0.05)
+    : (1 / 60);
+  lastAnimateTs = ts;
+
   if (xrSessionActive) {
-    updateVrLocomotion(ts);
-    camera.position.set(targetX, targetY, targetZ);
+    updateVrLocomotion(dt);
+    updateVrControllerPointers();
   } else {
     updateIntroAnimation(ts);
     camera.position.x = targetX + radius * Math.sin(phi) * Math.sin(theta);
@@ -902,6 +1241,8 @@ function animate(now) {
     camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);
     camera.lookAt(targetX, targetY, targetZ);
   }
+  updateInteractiveAnimations(dt);
+
   const activeCamera = xrSessionActive ? renderer.xr.getCamera(camera) : camera;
   [scalePersonBillboard, scalePersonCompanionBillboard].forEach((billboard, idx) => {
     if (!billboard) return;
