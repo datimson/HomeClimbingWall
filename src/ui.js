@@ -10,6 +10,8 @@ const raycaster = new THREE.Raycaster();
 const hoverMouse = new THREE.Vector2();
 const hoverInfoEl = document.getElementById('hoverInfo');
 const saveStatusEl = document.getElementById('saveStatus');
+const reactivateCameraBtn = document.getElementById('reactivateCameraBtn');
+const copyCameraBtn = document.getElementById('copyCameraBtn');
 let activeHoverMesh = null;
 let dimsAreFaded = false;
 let sceneIsFaded = false;
@@ -34,6 +36,267 @@ function getCurrentCameraState() {
 function persistCurrentCameraState() {
   if (typeof saveCameraState !== 'function') return false;
   return saveCameraState(getCurrentCameraState());
+}
+
+function buildCameraPosePayload() {
+  const camPos = camera?.position || {x: 0, y: 0, z: 0};
+  const n = v => Number(v.toFixed(6));
+  return {
+    state: {
+      theta: n(theta),
+      phi: n(phi),
+      radius: n(radius),
+      targetX: n(targetX),
+      targetY: n(targetY),
+      targetZ: n(targetZ),
+    },
+    cameraPosition: {
+      x: n(camPos.x),
+      y: n(camPos.y),
+      z: n(camPos.z),
+    },
+    lookAt: {
+      x: n(targetX),
+      y: n(targetY),
+      z: n(targetZ),
+    },
+  };
+}
+
+async function copyTextToClipboard(text) {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) {}
+
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) return true;
+  } catch (_) {}
+  return false;
+}
+
+const INTRO_DELAY_MS = 1300;
+const INTRO_TOTAL_MS = 25000;
+const INTRO_END_EASE_WINDOW = 0.14; // final 14% of timeline eases to a stop
+const INTRO_RIG_REBUILD_STEP_DEG = 0.8;
+
+// User-provided camera keyframes (plus return to start).
+// t values are normalized [0..1] over INTRO_TOTAL_MS.
+const INTRO_KEYFRAMES = Object.freeze([
+  { // 1
+    t: 0.00,
+    state: {theta: 1.615, phi: 1.555, radius: 8, targetX: 1.58553, targetY: 1.837716, targetZ: 1.909133},
+    rigOpen: 0,
+    eAngle: 5,
+  },
+  { // 2
+    t: 0.20,
+    state: {theta: 0.48, phi: 1.55, radius: 8, targetX: 1.58553, targetY: 1.837716, targetZ: 1.909133},
+    rigOpen: 180,
+    eAngle: 5,
+  },
+  { // 3
+    t: 0.45,
+    state: {theta: -0.325, phi: 1.65, radius: 8, targetX: 1.567144, targetY: 2.054634, targetZ: 1.921106},
+    rigOpen: 180,
+    eAngle: 40,
+  },
+  { // 4
+    t: 0.68,
+    state: {theta: -0.5, phi: 1.02, radius: 8, targetX: 1.396702, targetY: 1.875792, targetZ: 2.18587},
+    rigOpen: 90,
+    eAngle: 20,
+  },
+  { // 5
+    t: 0.84,
+    state: {theta: 1.2, phi: 0.92, radius: 8, targetX: 1.396702, targetY: 1.875792, targetZ: 2.18587},
+    rigOpen: 0,
+    eAngle: 5,
+  },
+  { // return to start
+    t: 1.00,
+    state: {theta: 1.615, phi: 1.555, radius: 8, targetX: 1.58553, targetY: 1.837716, targetZ: 1.909133},
+    rigOpen: 0,
+    eAngle: 5,
+  },
+]);
+
+const INTRO_TRACKS = Object.freeze({
+  theta: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.state.theta})),
+  phi: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.state.phi})),
+  radius: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.state.radius})),
+  targetX: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.state.targetX})),
+  targetY: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.state.targetY})),
+  targetZ: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.state.targetZ})),
+  rigOpen: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.rigOpen})),
+  eAngle: INTRO_KEYFRAMES.map(k => ({t: k.t, v: k.eAngle})),
+});
+
+const introAnim = {
+  active: false,
+  startTs: 0,
+  startCam: null,
+  startRigOpen: 0,
+  startEAngle: 0,
+  lastRigOpen: NaN,
+};
+
+function applyCameraState(state) {
+  if (!state) return;
+  theta = state.theta;
+  phi = state.phi;
+  radius = state.radius;
+  targetX = state.targetX;
+  targetY = state.targetY;
+  targetZ = state.targetZ;
+}
+
+function setIntroButtonVisible(visible) {
+  if (!reactivateCameraBtn) return;
+  reactivateCameraBtn.classList.toggle('is-hidden', !visible);
+}
+
+function setRigOpenValue(deg, doRebuild=false) {
+  const clamped = THREE.MathUtils.clamp(Number(deg) || 0, 0, 180);
+  wallState.rigOpen = clamped;
+  const rigSlider = document.getElementById('rigOpen');
+  const rigLabel = document.getElementById('rigOpenLabel');
+  if (rigSlider) rigSlider.value = String(clamped);
+  if (rigLabel) rigLabel.textContent = `${Math.round(clamped)}°`;
+  if (doRebuild) rebuild();
+  return clamped;
+}
+
+function setEAngleValue(deg) {
+  const clamped = THREE.MathUtils.clamp(Number(deg) || 0, -5, 60);
+  wallState.eAngle = clamped;
+  const eSlider = document.getElementById('angleSlider');
+  const eLabel = document.getElementById('angleLabel');
+  if (eSlider) eSlider.value = String(clamped);
+  if (eLabel) eLabel.textContent = `${Math.round(clamped)}°`;
+  if (typeof setAdjAngle === 'function') setAdjAngle(clamped);
+  return clamped;
+}
+
+function stopIntroAnimation({restoreStart=false} = {}) {
+  if (!introAnim.active) return;
+  introAnim.active = false;
+  if (restoreStart && introAnim.startCam) {
+    applyCameraState(introAnim.startCam);
+    setRigOpenValue(introAnim.startRigOpen, true);
+    setEAngleValue(introAnim.startEAngle);
+  }
+  setIntroButtonVisible(true);
+}
+
+function sampleSmoothKeyframes(keys, t) {
+  if (!Array.isArray(keys) || keys.length === 0) return 0;
+  if (keys.length === 1) return Number(keys[0].v) || 0;
+
+  const tt = THREE.MathUtils.clamp(t, keys[0].t, keys[keys.length - 1].t);
+  if (tt <= keys[0].t) return keys[0].v;
+  if (tt >= keys[keys.length - 1].t) return keys[keys.length - 1].v;
+
+  let i = 0;
+  while (i < keys.length - 1 && tt > keys[i + 1].t) i++;
+
+  const k0 = keys[Math.max(0, i - 1)];
+  const k1 = keys[i];
+  const k2 = keys[i + 1];
+  const k3 = keys[Math.min(keys.length - 1, i + 2)];
+
+  const t1 = k1.t;
+  const t2 = k2.t;
+  const span = Math.max(1e-6, t2 - t1);
+  const s = (tt - t1) / span;
+  const s2 = s * s;
+  const s3 = s2 * s;
+
+  const m1 = (k2.v - k0.v) / Math.max(1e-6, k2.t - k0.t);
+  const m2 = (k3.v - k1.v) / Math.max(1e-6, k3.t - k1.t);
+
+  const h00 = (2 * s3) - (3 * s2) + 1;
+  const h10 = s3 - (2 * s2) + s;
+  const h01 = (-2 * s3) + (3 * s2);
+  const h11 = s3 - s2;
+
+  return (h00 * k1.v) + (h10 * m1 * span) + (h01 * k2.v) + (h11 * m2 * span);
+}
+
+// Remap timeline so only the tail decelerates and reaches zero velocity at the end.
+function remapProgressForEndEase(p) {
+  const pp = THREE.MathUtils.clamp(p, 0, 1);
+  const w = THREE.MathUtils.clamp(INTRO_END_EASE_WINDOW, 0.01, 0.5);
+  const t0 = 1 - w;
+  if (pp <= t0) return pp;
+  const u = (pp - t0) / w;
+  // Cubic Hermite: p(0)=0, p'(0)=1, p(1)=1, p'(1)=0
+  const h = (-u * u * u) + (u * u) + u;
+  return t0 + (h * w);
+}
+
+function updateIntroAnimation(now) {
+  if (!introAnim.active || !introAnim.startCam) return;
+  if (now < introAnim.startTs) return;
+  const elapsed = now - introAnim.startTs;
+  if (elapsed >= INTRO_TOTAL_MS) {
+    stopIntroAnimation({restoreStart: true});
+    return;
+  }
+
+  const pRaw = THREE.MathUtils.clamp(elapsed / INTRO_TOTAL_MS, 0, 1);
+  const p = remapProgressForEndEase(pRaw);
+  const nextState = {
+    theta: sampleSmoothKeyframes(INTRO_TRACKS.theta, p),
+    phi: THREE.MathUtils.clamp(sampleSmoothKeyframes(INTRO_TRACKS.phi, p), ORBIT_MIN_POLAR, ORBIT_MAX_POLAR),
+    radius: sampleSmoothKeyframes(INTRO_TRACKS.radius, p),
+    targetX: sampleSmoothKeyframes(INTRO_TRACKS.targetX, p),
+    targetY: sampleSmoothKeyframes(INTRO_TRACKS.targetY, p),
+    targetZ: sampleSmoothKeyframes(INTRO_TRACKS.targetZ, p),
+  };
+  applyCameraState(nextState);
+
+  const rigOpen = THREE.MathUtils.clamp(sampleSmoothKeyframes(INTRO_TRACKS.rigOpen, p), 0, 180);
+  if (!Number.isFinite(introAnim.lastRigOpen) || Math.abs(rigOpen - introAnim.lastRigOpen) >= INTRO_RIG_REBUILD_STEP_DEG) {
+    setRigOpenValue(rigOpen, true);
+    introAnim.lastRigOpen = rigOpen;
+  }
+
+  const eAngle = THREE.MathUtils.clamp(sampleSmoothKeyframes(INTRO_TRACKS.eAngle, p), -5, 60);
+  setEAngleValue(eAngle);
+}
+
+function startIntroAnimation(fromSavedState=true) {
+  const startKeyframe = INTRO_KEYFRAMES[0];
+  const startCam = startKeyframe?.state || (
+    fromSavedState && typeof loadCameraState === 'function'
+      ? loadCameraState()
+      : getCurrentCameraState()
+  ) || getCurrentCameraState();
+  applyCameraState(startCam);
+  introAnim.startCam = {...startCam};
+  introAnim.startRigOpen = startKeyframe ? THREE.MathUtils.clamp(Number(startKeyframe.rigOpen) || 0, 0, 180) : THREE.MathUtils.clamp(Number(wallState.rigOpen) || 0, 0, 180);
+  introAnim.startEAngle = startKeyframe ? THREE.MathUtils.clamp(Number(startKeyframe.eAngle) || 0, -5, 60) : THREE.MathUtils.clamp(Number(wallState.eAngle) || 0, -5, 60);
+  introAnim.startTs = performance.now() + INTRO_DELAY_MS;
+  introAnim.lastRigOpen = NaN;
+  introAnim.active = true;
+  setIntroButtonVisible(false);
+  setRigOpenValue(introAnim.startRigOpen, true);
+  setEAngleValue(introAnim.startEAngle);
 }
 
 function panCamera(dx, dy, verticalPan=false) {
@@ -206,6 +469,41 @@ function showSaveStatus(text, isError=false) {
   }, 1600);
 }
 showSaveStatus.timer = null;
+
+function handleIntroCancelInteraction(e) {
+  if (!introAnim.active) return;
+  if (reactivateCameraBtn && (e.target === reactivateCameraBtn || reactivateCameraBtn.contains(e.target))) return;
+  if (copyCameraBtn && (e.target === copyCameraBtn || copyCameraBtn.contains(e.target))) return;
+  stopIntroAnimation({restoreStart: false});
+}
+
+document.addEventListener('pointerdown', handleIntroCancelInteraction, {capture: true});
+document.addEventListener('mousedown', handleIntroCancelInteraction, {capture: true});
+document.addEventListener('touchstart', handleIntroCancelInteraction, {capture: true, passive: true});
+
+if (reactivateCameraBtn) {
+  reactivateCameraBtn.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    startIntroAnimation(true);
+  });
+}
+
+if (copyCameraBtn) {
+  copyCameraBtn.addEventListener('click', async e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const payload = buildCameraPosePayload();
+    const json = JSON.stringify(payload, null, 2);
+    const copied = await copyTextToClipboard(json);
+    if (copied) {
+      showSaveStatus('Camera pose copied');
+      return;
+    }
+    window.prompt('Copy camera pose JSON:', json);
+    showSaveStatus('Camera pose ready');
+  });
+}
 
 wrap.addEventListener('mousedown', e => {
   hideHoverInfo();
@@ -466,8 +764,9 @@ window.addEventListener('resize', resize);
 resize();
 
 // Animate
-function animate() {
+function animate(now) {
   requestAnimationFrame(animate);
+  updateIntroAnimation(Number.isFinite(now) ? now : performance.now());
   camera.position.x = targetX + radius * Math.sin(phi) * Math.sin(theta);
   camera.position.y = targetY + radius * Math.cos(phi);
   camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);
@@ -485,4 +784,5 @@ function animate() {
   });
   renderer.render(scene, camera);
 }
+startIntroAnimation(true);
 animate();
