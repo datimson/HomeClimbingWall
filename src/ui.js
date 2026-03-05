@@ -38,17 +38,22 @@ function persistCurrentCameraState() {
 
 function panCamera(dx, dy, verticalPan=false) {
   const panScale = Math.max(0.004, radius * 0.0017);
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
   const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
-  forward.y = 0;
-  if (forward.lengthSq() < 1e-8) forward.set(0, 0, -1);
-  else forward.normalize();
-  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  camera.getWorldDirection(forward).normalize();
 
-  // Ground-plane pan by default (X/Z), optional vertical pan with Alt/Ctrl.
-  targetX += (-dx * panScale) * right.x + (dy * panScale) * forward.x;
-  targetZ += (-dx * panScale) * right.z + (dy * panScale) * forward.z;
-  if (verticalPan) targetY -= dy * panScale;
+  // Screen-space pan: left/right always follows camera-right, up/down follows camera-up.
+  // Optional Alt/Ctrl mode keeps prior behavior of panning in view depth instead of camera-up.
+  const panU = new THREE.Vector3().copy(right).multiplyScalar(-dx * panScale);
+  const panV = new THREE.Vector3()
+    .copy(verticalPan ? forward : up)
+    .multiplyScalar(dy * panScale);
+  const pan = panU.add(panV);
+
+  targetX += pan.x;
+  targetY += pan.y;
+  targetZ += pan.z;
 }
 
 function setGroupOpacity(group, alpha) {
@@ -232,12 +237,47 @@ wrap.addEventListener('wheel', e => {
 
 // Touch support
 let lastTouchDist = null;
+let lastTouchMidX = null;
+let lastTouchMidY = null;
 wrap.addEventListener('touchstart', e => {
   hideHoverInfo();
-  if (e.touches.length === 1) { isDragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; }
-  if (e.touches.length === 2) { lastTouchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); }
+  if (e.touches.length === 1) {
+    isDragging = true;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+    lastTouchDist = null;
+    lastTouchMidX = null;
+    lastTouchMidY = null;
+  } else if (e.touches.length === 2) {
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    lastTouchDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+    lastTouchMidX = (t0.clientX + t1.clientX) * 0.5;
+    lastTouchMidY = (t0.clientY + t1.clientY) * 0.5;
+    isDragging = false;
+  }
 });
-wrap.addEventListener('touchend', () => { isDragging = false; lastTouchDist = null; });
+wrap.addEventListener('touchend', e => {
+  if (e.touches.length === 1) {
+    isDragging = true;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+    lastTouchDist = null;
+    lastTouchMidX = null;
+    lastTouchMidY = null;
+    return;
+  }
+  isDragging = false;
+  lastTouchDist = null;
+  lastTouchMidX = null;
+  lastTouchMidY = null;
+});
+wrap.addEventListener('touchcancel', () => {
+  isDragging = false;
+  lastTouchDist = null;
+  lastTouchMidX = null;
+  lastTouchMidY = null;
+});
 wrap.addEventListener('touchmove', e => {
   e.preventDefault();
   if (e.touches.length === 1 && isDragging) {
@@ -245,11 +285,27 @@ wrap.addEventListener('touchmove', e => {
     lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
     theta -= dx * 0.005;
     phi = Math.max(ORBIT_MIN_POLAR, Math.min(ORBIT_MAX_POLAR, phi - dy * 0.005));
+    return;
   }
-  if (e.touches.length === 2 && lastTouchDist !== null) {
-    const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-    radius = Math.max(3, Math.min(25, radius - (dist - lastTouchDist) * 0.02));
+  if (e.touches.length === 2) {
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    const dist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+    const midX = (t0.clientX + t1.clientX) * 0.5;
+    const midY = (t0.clientY + t1.clientY) * 0.5;
+
+    if (lastTouchDist !== null) {
+      radius = Math.max(3, Math.min(25, radius - (dist - lastTouchDist) * 0.02));
+    }
+    if (lastTouchMidX !== null && lastTouchMidY !== null) {
+      const dx = midX - lastTouchMidX;
+      const dy = midY - lastTouchMidY;
+      panCamera(dx, dy, false);
+    }
+
     lastTouchDist = dist;
+    lastTouchMidX = midX;
+    lastTouchMidY = midY;
   }
 }, { passive: false });
 
@@ -316,6 +372,11 @@ bindSlider('f2Angle', 'f2AngleLabel', 'f2Angle', v => v + '°', true);
 bindSlider('f2WidthTop', 'f2WidthTopLabel', 'f2WidthTop', v => v.toFixed(2) + 'm', true);
 bindSlider('rigOpen', 'rigOpenLabel', 'rigOpen', v => Math.round(v) + '°', true);
 syncSlidersFromState();
+
+const wallControlsDetails = document.getElementById('wallControlsDetails');
+if (wallControlsDetails && window.matchMedia && window.matchMedia('(max-width: 980px)').matches) {
+  wallControlsDetails.removeAttribute('open');
+}
 
 const saveConfigBtn = document.getElementById('saveConfigBtn');
 if (saveConfigBtn) {
