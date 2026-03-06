@@ -42,6 +42,32 @@ function persistCurrentCameraState() {
   return saveCameraState(getCurrentCameraState());
 }
 
+const REBUILD_THROTTLE_MS = 40;
+let queuedRebuildTimer = 0;
+let lastRebuildAt = 0;
+function requestRebuild({immediate=false} = {}) {
+  if (typeof rebuild !== 'function') return;
+  const run = () => {
+    lastRebuildAt = performance.now();
+    rebuild();
+  };
+  if (immediate) {
+    if (queuedRebuildTimer) {
+      clearTimeout(queuedRebuildTimer);
+      queuedRebuildTimer = 0;
+    }
+    run();
+    return;
+  }
+  if (queuedRebuildTimer) return;
+  const elapsed = performance.now() - lastRebuildAt;
+  const wait = Math.max(0, REBUILD_THROTTLE_MS - elapsed);
+  queuedRebuildTimer = setTimeout(() => {
+    queuedRebuildTimer = 0;
+    run();
+  }, wait);
+}
+
 const XR_FLOOR_EYE_HEIGHT = 1.72;
 const XR_MIN_EYE_HEIGHT = 1.20;
 const XR_MAX_EYE_HEIGHT = 2.25;
@@ -370,7 +396,7 @@ function applyVrMenuStateKey(key, nextValue) {
   if (key === 'eAngle') {
     eSweepAnim.active = false;
     setEAngleValue(clamped);
-    rebuild();
+    requestRebuild();
     return;
   }
 
@@ -378,12 +404,14 @@ function applyVrMenuStateKey(key, nextValue) {
     rigToggleAnim.targetDeg = null;
     rigToggleAnim.lastRebuildDeg = NaN;
     setRigOpenValue(clamped, true);
+    refreshVrQuickMenuValues();
     return;
   }
 
   wallState[key] = (typeof clampWallStateValue === 'function') ? clampWallStateValue(key, clamped) : clamped;
+  if (key === 'eAngle' && typeof setAdjAngle === 'function') setAdjAngle(wallState.eAngle);
   syncSlidersFromState();
-  rebuild();
+  requestRebuild();
   refreshVrQuickMenuValues();
 }
 
@@ -1391,7 +1419,6 @@ function updateVrLocomotion(dtSeconds) {
 const INTRO_DELAY_MS = 1300;
 const INTRO_TOTAL_MS = 25000;
 const INTRO_END_EASE_WINDOW = 0.14; // final 14% of timeline eases to a stop
-const INTRO_RIG_REBUILD_STEP_DEG = 0.8;
 
 // User-provided camera keyframes (plus return to start).
 // t values are normalized [0..1] over INTRO_TOTAL_MS.
@@ -1476,7 +1503,17 @@ function setRigOpenValue(deg, doRebuild=false) {
   const rigLabel = document.getElementById('rigOpenLabel');
   if (rigSlider) rigSlider.value = String(clamped);
   if (rigLabel) rigLabel.textContent = `${Math.round(clamped)}°`;
-  if (doRebuild) rebuild();
+  const didFastApply = (typeof setTrainingRigOpenAngle === 'function')
+    ? setTrainingRigOpenAngle(clamped)
+    : false;
+  if (
+    didFastApply &&
+    activeHoverMesh?.userData?.sectionInfo?.hoverKind === 'trainingRig' &&
+    typeof drawHoverSectionDimensions === 'function'
+  ) {
+    drawHoverSectionDimensions(activeHoverMesh, activeHoverMesh.userData.sectionInfo);
+  }
+  if (doRebuild && !didFastApply && trainingRigEnabled) requestRebuild();
   return clamped;
 }
 
@@ -1610,10 +1647,8 @@ function updateIntroAnimation(now) {
   applyCameraState(nextState);
 
   const rigOpen = THREE.MathUtils.clamp(sampleSmoothKeyframes(INTRO_TRACKS.rigOpen, p), 0, 180);
-  if (!Number.isFinite(introAnim.lastRigOpen) || Math.abs(rigOpen - introAnim.lastRigOpen) >= INTRO_RIG_REBUILD_STEP_DEG) {
-    setRigOpenValue(rigOpen, true);
-    introAnim.lastRigOpen = rigOpen;
-  }
+  setRigOpenValue(rigOpen, false);
+  introAnim.lastRigOpen = rigOpen;
 
   const eAngle = THREE.MathUtils.clamp(sampleSmoothKeyframes(INTRO_TRACKS.eAngle, p), -5, 60);
   setEAngleValue(eAngle);
@@ -1943,14 +1978,20 @@ function bindSlider(id, labelId, stateKey, fmt, triggerRebuild) {
   }
   el.addEventListener('input', () => {
     const v = parseFloat(el.value);
-    wallState[stateKey] = v;
-    if (stateKey === 'eAngle') eSweepAnim.active = false;
     if (stateKey === 'rigOpen') {
       rigToggleAnim.targetDeg = null;
       rigToggleAnim.lastRebuildDeg = NaN;
+      if (lbl) lbl.textContent = fmt(v);
+      setRigOpenValue(v, true);
+      return;
     }
+    wallState[stateKey] = v;
+    if (stateKey === 'eAngle') eSweepAnim.active = false;
     if (lbl) lbl.textContent = fmt(v);
-    if (triggerRebuild) rebuild();
+    if (triggerRebuild) {
+      if (stateKey === 'eAngle' && typeof setAdjAngle === 'function') setAdjAngle(v);
+      requestRebuild();
+    }
     else setAdjAngle(wallState.eAngle);
   });
 }
@@ -2147,6 +2188,19 @@ function animate(now) {
   });
   renderer.render(scene, camera);
 }
-setupWebXR();
-startIntroAnimation(true);
+
+async function initExperience() {
+  setIntroButtonVisible(false);
+  setupWebXR();
+  let shouldPlayIntro = true;
+  try {
+    shouldPlayIntro = !(await detectVrSupport());
+  } catch (_) {
+    shouldPlayIntro = true;
+  }
+  if (shouldPlayIntro) startIntroAnimation(true);
+  else setIntroButtonVisible(false);
+}
+
+initExperience();
 renderer.setAnimationLoop(animate);

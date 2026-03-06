@@ -1387,8 +1387,64 @@ function buildConceptVolumes(group, s) {
   placeBackWallDart(bX, bTipY, bAngle, 0.19, 0.07, 0.08, 0.24, 'dartB');
 }
 
+let trainingRigPivot = null;
+let trainingRigHoverInfo = null;
+let trainingRigHoverAnchors = null;
+const trainingRigTmpFront = new THREE.Vector3();
+const trainingRigTmpBar = new THREE.Vector3();
+const trainingRigTmpW1 = new THREE.Vector3();
+const trainingRigTmpW2 = new THREE.Vector3();
+
+function clearTrainingRigRuntime() {
+  trainingRigPivot = null;
+  trainingRigHoverInfo = null;
+  trainingRigHoverAnchors = null;
+}
+
+function updateTrainingRigHoverInfo() {
+  if (!trainingRigPivot || !trainingRigHoverInfo || !trainingRigHoverAnchors) return false;
+  trainingRigPivot.updateMatrixWorld(true);
+
+  trainingRigTmpFront.copy(trainingRigHoverAnchors.frameFrontLocal);
+  trainingRigTmpBar.copy(trainingRigHoverAnchors.barLocal);
+  trainingRigTmpW1.copy(trainingRigHoverAnchors.widthP1Local);
+  trainingRigTmpW2.copy(trainingRigHoverAnchors.widthP2Local);
+  trainingRigPivot.localToWorld(trainingRigTmpFront);
+  trainingRigPivot.localToWorld(trainingRigTmpBar);
+  trainingRigPivot.localToWorld(trainingRigTmpW1);
+  trainingRigPivot.localToWorld(trainingRigTmpW2);
+
+  trainingRigHoverInfo.frontX = trainingRigTmpFront.x;
+  trainingRigHoverInfo.frontZ = trainingRigTmpFront.z;
+  trainingRigHoverInfo.barX = trainingRigTmpBar.x;
+  trainingRigHoverInfo.barZ = trainingRigTmpBar.z;
+  trainingRigHoverInfo.widthP1 = {
+    x: trainingRigTmpW1.x,
+    y: trainingRigTmpW1.y,
+    z: trainingRigTmpW1.z,
+  };
+  trainingRigHoverInfo.widthP2 = {
+    x: trainingRigTmpW2.x,
+    y: trainingRigTmpW2.y,
+    z: trainingRigTmpW2.z,
+  };
+  const hangSide = Number(trainingRigHoverAnchors.hangSide) || -1;
+  trainingRigHoverInfo.anchorX = Math.max(trainingRigTmpFront.x, trainingRigTmpBar.x) + 0.14;
+  trainingRigHoverInfo.anchorZ = trainingRigTmpFront.z + (hangSide * 0.18);
+  return true;
+}
+
+function setTrainingRigOpenAngle(deg) {
+  if (!trainingRigPivot) return false;
+  const clamped = THREE.MathUtils.clamp(Number(deg) || 0, 0, 180);
+  trainingRigPivot.rotation.y = THREE.MathUtils.degToRad(clamped);
+  updateTrainingRigHoverInfo();
+  return true;
+}
+
 // ── Hinged external training rig + storage cabinet on the back of F ──
 function buildTrainingRig(group, s) {
+  clearTrainingRigRuntime();
   if (!s) return;
   const showRig = (typeof trainingRigEnabled === 'boolean') ? trainingRigEnabled : true;
   const showCabinet = (typeof trainingCabinetEnabled === 'boolean') ? trainingCabinetEnabled : true;
@@ -1573,31 +1629,26 @@ function buildTrainingRig(group, s) {
   pivot.add(bar);
 
   // Hover metadata: expose both X/Z so hover dim logic can choose dominant axis.
-  pivot.updateMatrixWorld(true);
   const frameFaceLocalZ = frameOffsetFromAxisZ + hangSide * (frameDepth * 0.5);
-  const frameFrontWorld = pivot.localToWorld(new THREE.Vector3(midXLocal, yTop, frameFaceLocalZ));
-  const barWorld = pivot.localToWorld(new THREE.Vector3(midXLocal, extY, barAxisZ));
-  const widthLWorld = pivot.localToWorld(new THREE.Vector3(leftXLocal + 0.02, yBottom - 0.10, frameFaceLocalZ));
-  const widthRWorld = pivot.localToWorld(new THREE.Vector3(rightXLocal, yBottom - 0.10, frameFaceLocalZ));
-  registerSectionHover(
-    board,
-    sectionInfo('R', 'Training Rig', 0, yTop - yBottom, yBottom, {
-      hoverKind: 'trainingRig',
-      bracketTopY: yTop,
-      bracketBottomY: yBottom,
-      wallX: W,
-      wallZ: D,
-      frontX: frameFrontWorld.x,
-      frontZ: frameFrontWorld.z,
-      barX: barWorld.x,
-      barZ: barWorld.z,
-      widthM: spanW,
-      widthP1: {x: widthLWorld.x, y: widthLWorld.y, z: widthLWorld.z},
-      widthP2: {x: widthRWorld.x, y: widthRWorld.y, z: widthRWorld.z},
-      anchorX: Math.max(frameFrontWorld.x, barWorld.x) + 0.14,
-      anchorZ: frameFrontWorld.z + (hangSide * 0.18),
-    })
-  );
+  const rigInfo = sectionInfo('R', 'Training Rig', 0, yTop - yBottom, yBottom, {
+    hoverKind: 'trainingRig',
+    bracketTopY: yTop,
+    bracketBottomY: yBottom,
+    wallX: W,
+    wallZ: D,
+    widthM: spanW,
+  });
+  trainingRigPivot = pivot;
+  trainingRigHoverInfo = rigInfo;
+  trainingRigHoverAnchors = {
+    hangSide,
+    frameFrontLocal: new THREE.Vector3(midXLocal, yTop, frameFaceLocalZ),
+    barLocal: new THREE.Vector3(midXLocal, extY, barAxisZ),
+    widthP1Local: new THREE.Vector3(leftXLocal + 0.02, yBottom - 0.10, frameFaceLocalZ),
+    widthP2Local: new THREE.Vector3(rightXLocal, yBottom - 0.10, frameFaceLocalZ),
+  };
+  updateTrainingRigHoverInfo();
+  registerSectionHover(board, rigInfo);
 }
 
 // ── L-shaped roof cap ──
