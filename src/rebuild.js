@@ -1,6 +1,162 @@
 let floorSlab = null;
 let environmentSkyDome = null;
 let environmentGrass = null;
+let houseBrickTexturePack = null;
+let neighborWeatherboardTexturePack = null;
+const HOUSE_BRICK_BASE_COLOR = 0xab6e48;
+const HOUSE_BRICK_TEX_METERS = 1.2;
+const NEIGHBOR_BRICK_BASE_COLOR = 0x4a4d52; // Monument-painted brick
+const WEATHERBOARD_BASE_COLOR = 0xf1eee7;
+const WEATHERBOARD_BOARD_SPACING_M = 0.22;
+const WEATHERBOARD_BOARDS_PER_TILE = 8;
+const HOUSE_BRICK_TEXTURE_PATHS = Object.freeze({
+  map: 'textures/sources/house-brick/brick_wall_003_diffuse_2k.jpg',
+  normalMap: 'textures/sources/house-brick/brick_wall_003_nor_gl_2k.jpg',
+  roughnessMap: 'textures/sources/house-brick/brick_wall_003_rough_2k.jpg',
+  aoMap: 'textures/sources/house-brick/brick_wall_003_ao_2k.jpg',
+});
+
+function configureHouseBrickTexture(tex, repeatX=1, repeatY=1, isColor=false) {
+  if (!tex) return null;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeatX, repeatY);
+  if (isColor && typeof THREE.sRGBEncoding !== 'undefined') tex.encoding = THREE.sRGBEncoding;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  if (renderer?.capabilities?.getMaxAnisotropy) {
+    tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  }
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function applyWorldBoxUv(geometry, metersPerTile=1.2) {
+  if (!geometry?.attributes?.position || !geometry?.attributes?.normal) return;
+  const pos = geometry.attributes.position;
+  const normal = geometry.attributes.normal;
+  const uv = geometry.attributes.uv || new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2);
+  const scale = Math.max(0.05, Number(metersPerTile) || 1.2);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const nx = Math.abs(normal.getX(i));
+    const ny = Math.abs(normal.getY(i));
+    const nz = Math.abs(normal.getZ(i));
+    let u = 0;
+    let v = 0;
+    if (ny >= nx && ny >= nz) {
+      // top/bottom
+      u = x / scale;
+      v = z / scale;
+    } else if (nx >= ny && nx >= nz) {
+      // +/-X faces
+      u = z / scale;
+      v = y / scale;
+    } else {
+      // +/-Z faces
+      u = x / scale;
+      v = y / scale;
+    }
+    uv.setXY(i, u, v);
+  }
+  geometry.setAttribute('uv', uv);
+  geometry.setAttribute('uv2', new THREE.BufferAttribute(uv.array.slice(0), 2));
+  uv.needsUpdate = true;
+  geometry.attributes.uv2.needsUpdate = true;
+}
+
+function applyRoofWorldUv(geometry, spanX=Math.max(0.001, W), spanZ=Math.max(0.001, D)) {
+  if (!geometry?.attributes?.position) return;
+  const pos = geometry.attributes.position;
+  const uv = new Float32Array(pos.count * 2);
+  const sx = Math.max(0.001, Number(spanX) || 1);
+  const sz = Math.max(0.001, Number(spanZ) || 1);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    uv[i * 2] = x / sx;
+    uv[i * 2 + 1] = z / sz;
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+}
+
+function applyHouseBrickTintShader(mat) {
+  if (!mat || mat.userData?.houseBrickTintShader) return;
+  mat.userData.houseBrickTintShader = true;
+  mat.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `
+#ifdef USE_MAP
+  vec4 texelColor = texture2D( map, vUv );
+  texelColor = mapTexelToLinear( texelColor );
+  float luma = dot(texelColor.rgb, vec3(0.299, 0.587, 0.114));
+  vec3 detail = mix(texelColor.rgb, vec3(luma), 0.88);
+  diffuseColor.rgb *= detail;
+  diffuseColor.a *= texelColor.a;
+#endif
+      `
+    );
+  };
+  mat.needsUpdate = true;
+}
+
+function getHouseBrickTexturePack() {
+  if (houseBrickTexturePack) return houseBrickTexturePack;
+  const loader = new THREE.TextureLoader();
+  const map = configureHouseBrickTexture(loader.load(HOUSE_BRICK_TEXTURE_PATHS.map), 1, 1, true);
+  const normalMap = configureHouseBrickTexture(loader.load(HOUSE_BRICK_TEXTURE_PATHS.normalMap), 1, 1, false);
+  const roughnessMap = configureHouseBrickTexture(loader.load(HOUSE_BRICK_TEXTURE_PATHS.roughnessMap), 1, 1, false);
+  const aoMap = configureHouseBrickTexture(loader.load(HOUSE_BRICK_TEXTURE_PATHS.aoMap), 1, 1, false);
+  houseBrickTexturePack = { map, normalMap, roughnessMap, aoMap };
+  return houseBrickTexturePack;
+}
+
+function getNeighborWeatherboardTexturePack() {
+  if (neighborWeatherboardTexturePack) return neighborWeatherboardTexturePack;
+  const size = 1024;
+  const boardPitch = Math.max(32, Math.round(size / WEATHERBOARD_BOARDS_PER_TILE));
+  const colorCanvas = document.createElement('canvas');
+  colorCanvas.width = size;
+  colorCanvas.height = size;
+  const colorCtx = colorCanvas.getContext('2d');
+  if (!colorCtx) return null;
+  colorCtx.fillStyle = '#ece9e2';
+  colorCtx.fillRect(0, 0, size, size);
+  for (let y = 0; y < size; y += boardPitch) {
+    const odd = ((y / boardPitch) % 2) === 1;
+    colorCtx.fillStyle = odd ? '#efede7' : '#e8e5de';
+    colorCtx.fillRect(0, y, size, boardPitch);
+    // shadow groove
+    colorCtx.fillStyle = 'rgba(0,0,0,0.18)';
+    colorCtx.fillRect(0, y, size, 2);
+    // highlight lip
+    colorCtx.fillStyle = 'rgba(255,255,255,0.35)';
+    colorCtx.fillRect(0, y + 2, size, 1);
+  }
+
+  const bumpCanvas = document.createElement('canvas');
+  bumpCanvas.width = size;
+  bumpCanvas.height = size;
+  const bumpCtx = bumpCanvas.getContext('2d');
+  if (!bumpCtx) return null;
+  bumpCtx.fillStyle = '#808080';
+  bumpCtx.fillRect(0, 0, size, size);
+  for (let y = 0; y < size; y += boardPitch) {
+    bumpCtx.fillStyle = '#5e5e5e';
+    bumpCtx.fillRect(0, y, size, 2);
+    bumpCtx.fillStyle = '#b9b9b9';
+    bumpCtx.fillRect(0, y + 2, size, 1);
+  }
+
+  neighborWeatherboardTexturePack = {
+    map: makeCanvasTexture(colorCanvas, 1, 1),
+    bumpMap: makeCanvasTexture(bumpCanvas, 1, 1),
+  };
+  return neighborWeatherboardTexturePack;
+}
 
 function rebuildFloorSlab() {
   if (floorSlab) {
@@ -86,6 +242,7 @@ function rebuild() {
   buildBackSectionTwoStage(wallGroup, dWidth, s.dAngle, s.d2Angle, s.bWidth + s.cWidth + dWidth/2, s.d1Height, 'D');
   buildSideSection(wallGroup, fixedSideLen, s.aAngle, fixedSideLen, 'A');
   buildFWall(wallGroup, s.f1Width, s.f1Angle, s.f2Angle, s.f2WidthTop, s.f1Height);
+  buildRearABCornerShellCap(wallGroup);
   buildTrainingRig(wallGroup, s);
   buildCampusBoardOnD(wallGroup, s);
   buildConceptVolumes(wallGroup, s);
@@ -618,7 +775,7 @@ rebuildFloorSlab();
   const houseEaveInset = HOUSE_EAVE_INSET;
   const houseBackWallProjectLen = HOUSE_BACK_WALL_PROJECT_LEN;
 
-  const createBrickTexture = () => {
+  const createBrickFallbackTexture = () => {
     const cv = document.createElement('canvas');
     cv.width = 640;
     cv.height = 384;
@@ -646,13 +803,13 @@ rebuildFloorSlab();
   };
   const createAxonTexture = () => {
     const cv = document.createElement('canvas');
-    cv.width = 512;
-    cv.height = 512;
+    cv.width = 960;
+    cv.height = 960;
     const ctx = cv.getContext('2d');
     if (!ctx) return null;
     ctx.fillStyle = '#43484f';
     ctx.fillRect(0, 0, cv.width, cv.height);
-    const groove = 42;
+    const groove = 48;
     for (let x = 0; x < cv.width; x += groove) {
       ctx.fillStyle = 'rgba(255,255,255,0.08)';
       ctx.fillRect(x, 0, 2, cv.height);
@@ -661,15 +818,50 @@ rebuildFloorSlab();
     }
     return makeCanvasTexture(cv, 1.0, 1.3);
   };
+  const hardieGrooveSpacingM = 0.12;
+  const axonRefHeight = 2.40;
+  const makeAxonFaceMaterial = (faceWidth, faceHeight) => {
+    if (typeof makeMonumentAxonMaterial === 'function') {
+      return makeMonumentAxonMaterial(faceWidth, faceHeight, {
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      });
+    }
+    const tex = createAxonTexture();
+    if (tex) {
+      const groovesPerTile = 960 / 48;
+      const repX = Math.max(0.08, faceWidth / (hardieGrooveSpacingM * groovesPerTile));
+      const repY = Math.max(0.15, 1.3 * (faceHeight / axonRefHeight));
+      tex.repeat.set(repX, repY);
+      tex.needsUpdate = true;
+    }
+    return new THREE.MeshLambertMaterial({
+      color: 0xffffff,
+      map: tex,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+  };
 
-  const houseBrickMat = new THREE.MeshLambertMaterial({
-    color: 0xffffff,
-    map: createBrickTexture(),
+  const brickPack = getHouseBrickTexturePack();
+  const houseBrickMat = new THREE.MeshStandardMaterial({
+    color: HOUSE_BRICK_BASE_COLOR,
+    // Tint-driven brick color: keep depth/detail from PBR maps, but no photo albedo map.
+    map: null,
+    normalMap: brickPack?.normalMap || null,
+    roughnessMap: brickPack?.roughnessMap || null,
+    aoMap: brickPack?.aoMap || null,
+    roughness: brickPack?.roughnessMap ? 1.0 : 0.92,
+    metalness: 0.05,
     side: THREE.DoubleSide,
   });
+  houseBrickMat.userData.worldBoxUvScale = HOUSE_BRICK_TEX_METERS;
+  if (houseBrickMat.normalMap) houseBrickMat.normalScale = new THREE.Vector2(0.65, 0.65);
   const houseProjectionMat = new THREE.MeshLambertMaterial({
-    color: 0xffffff,
-    map: createAxonTexture(),
+    color: 0x43484f,
     side: THREE.DoubleSide,
   });
   const houseRoofStartMat = new THREE.MeshLambertMaterial({
@@ -680,10 +872,9 @@ rebuildFloorSlab();
     color: 0x565c64,
     side: THREE.DoubleSide,
   });
-  const houseRoofMat = new THREE.MeshLambertMaterial({
-    color: 0x6d737b,
-    side: THREE.DoubleSide,
-  });
+  const houseRoofMat = (typeof claddingMat !== 'undefined' && claddingMat)
+    ? claddingMat
+    : new THREE.MeshLambertMaterial({ color: 0x4a4d52, side: THREE.DoubleSide });
   const houseOutlineMat = new THREE.LineBasicMaterial({
     color: 0x8f8b82,
     transparent: true,
@@ -699,10 +890,16 @@ rebuildFloorSlab();
     wallZ0,
     wallZ1
   );
+  const projectionDepthX = Math.max(0, wallX0 - houseBackOffsetX);
+  const projectionLenZ = Math.max(0, backProjectZ1 - wallZ0);
 
   const addHouseMassBox = (w, h, d, cx, cy, cz, mat) => {
     if (w <= 0.02 || h <= 0.02 || d <= 0.02) return;
     const mesh = box(w, h, d, mat, 0, 0, 0, cx, cy, cz);
+    const uvScale = Number(mat?.userData?.worldBoxUvScale);
+    if (mesh?.geometry && Number.isFinite(uvScale) && uvScale > 0) {
+      applyWorldBoxUv(mesh.geometry, uvScale);
+    }
     mesh.userData.context = 'house';
     environmentGroup.add(mesh);
   };
@@ -720,14 +917,48 @@ rebuildFloorSlab();
 
   // Rear corner projection: back wall sits at eave line for 3.34m.
   addHouseMassBox(
-    wallX0 - houseBackOffsetX,
+    projectionDepthX,
     houseWallHeight,
-    backProjectZ1 - wallZ0,
+    projectionLenZ,
     (houseBackOffsetX + wallX0) * 0.5,
     houseWallHeight * 0.5,
     (wallZ0 + backProjectZ1) * 0.5,
     houseProjectionMat
   );
+  // Apply Axon cladding as world-scaled planes so short and long faces keep
+  // consistent board spacing (no UV squash on the perpendicular return).
+  if (projectionDepthX > 0.02 && projectionLenZ > 0.02) {
+    const claddingOffset = 0.006;
+
+    const longFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(projectionLenZ, houseWallHeight),
+      makeAxonFaceMaterial(projectionLenZ, houseWallHeight)
+    );
+    longFace.rotation.y = -Math.PI * 0.5;
+    longFace.position.set(
+      houseBackOffsetX - claddingOffset,
+      houseWallHeight * 0.5,
+      (wallZ0 + backProjectZ1) * 0.5
+    );
+    longFace.userData.context = 'house';
+    longFace.castShadow = true;
+    longFace.receiveShadow = true;
+    environmentGroup.add(longFace);
+
+    const shortFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(projectionDepthX, houseWallHeight),
+      makeAxonFaceMaterial(projectionDepthX, houseWallHeight)
+    );
+    shortFace.position.set(
+      (houseBackOffsetX + wallX0) * 0.5,
+      houseWallHeight * 0.5,
+      backProjectZ1 + claddingOffset
+    );
+    shortFace.userData.context = 'house';
+    shortFace.castShadow = true;
+    shortFace.receiveShadow = true;
+    environmentGroup.add(shortFace);
+  }
 
   // Thin cap to indicate "roof starts here" level on top of wall footprint.
   addHouseMassBox(
@@ -784,6 +1015,7 @@ rebuildFloorSlab();
 
   const houseRoofGeo = new THREE.BufferGeometry();
   houseRoofGeo.setAttribute('position', new THREE.Float32BufferAttribute(roofVerts, 3));
+  applyRoofWorldUv(houseRoofGeo, Math.max(0.001, W), Math.max(0.001, D));
   houseRoofGeo.computeVertexNormals();
   const houseRoof = new THREE.Mesh(houseRoofGeo, houseRoofMat);
   houseRoof.castShadow = true;
@@ -828,10 +1060,31 @@ rebuildFloorSlab();
   const neighborWallZFar = neighborRoofZFar + NEIGHBOR_EAVE_INSET;
   const neighborWallZNear = neighborRoofZNear - NEIGHBOR_EAVE_INSET;
 
-  const neighborWallMat = new THREE.MeshLambertMaterial({
-    color: 0xd9d6cf,
+  const neighborBrickMat = new THREE.MeshStandardMaterial({
+    color: NEIGHBOR_BRICK_BASE_COLOR,
+    map: null,
+    normalMap: brickPack?.normalMap || null,
+    roughnessMap: brickPack?.roughnessMap || null,
+    aoMap: brickPack?.aoMap || null,
+    roughness: brickPack?.roughnessMap ? 1.0 : 0.92,
+    metalness: 0.05,
     side: THREE.DoubleSide,
   });
+  neighborBrickMat.userData.worldBoxUvScale = HOUSE_BRICK_TEX_METERS;
+  if (neighborBrickMat.normalMap) neighborBrickMat.normalScale = new THREE.Vector2(0.65, 0.65);
+
+  const weatherboardPack = getNeighborWeatherboardTexturePack();
+  const neighborWeatherboardMat = new THREE.MeshStandardMaterial({
+    color: WEATHERBOARD_BASE_COLOR,
+    map: weatherboardPack?.map || null,
+    bumpMap: weatherboardPack?.bumpMap || null,
+    bumpScale: weatherboardPack?.bumpMap ? 0.022 : 0,
+    roughness: 0.82,
+    metalness: 0.02,
+    side: THREE.DoubleSide,
+  });
+  neighborWeatherboardMat.userData.worldBoxUvScale = WEATHERBOARD_BOARD_SPACING_M * WEATHERBOARD_BOARDS_PER_TILE;
+
   const neighborRoofMat = new THREE.MeshLambertMaterial({
     color: 0x646a72,
     side: THREE.DoubleSide,
@@ -841,14 +1094,25 @@ rebuildFloorSlab();
     neighborWallX1 > neighborWallX0 + 0.05 &&
     neighborWallZNear > neighborWallZFar + 0.05
   ) {
+    const neighborLowerH = NEIGHBOR_WALL_HEIGHT * 0.5;
+    const neighborUpperH = Math.max(0.2, NEIGHBOR_WALL_HEIGHT - neighborLowerH);
     addHouseMassBox(
       neighborWallX1 - neighborWallX0,
-      NEIGHBOR_WALL_HEIGHT,
+      neighborLowerH,
       neighborWallZNear - neighborWallZFar,
       (neighborWallX0 + neighborWallX1) * 0.5,
-      NEIGHBOR_WALL_HEIGHT * 0.5,
+      neighborLowerH * 0.5,
       (neighborWallZFar + neighborWallZNear) * 0.5,
-      neighborWallMat
+      neighborBrickMat
+    );
+    addHouseMassBox(
+      neighborWallX1 - neighborWallX0,
+      neighborUpperH,
+      neighborWallZNear - neighborWallZFar,
+      (neighborWallX0 + neighborWallX1) * 0.5,
+      neighborLowerH + (neighborUpperH * 0.5),
+      (neighborWallZFar + neighborWallZNear) * 0.5,
+      neighborWeatherboardMat
     );
     addHouseMassBox(
       neighborWallX1 - neighborWallX0,
@@ -1052,9 +1316,11 @@ rebuildFloorSlab();
     return glass;
   };
 
+  const outdoorSlabTopYForOpenings = OUTDOOR_SLAB_HEIGHT;
   const frenchDoorW = 1.8;
   const frenchDoorH = 2.0;
-  const frenchDoorBottomY = 0.0;
+  // Door starts 20mm above the outdoor slab top.
+  const frenchDoorBottomY = outdoorSlabTopYForOpenings + 0.02;
   const frenchDoorOffsetFromProjection = 0.5;
   const doorZ0 = THREE.MathUtils.clamp(
     backProjectZ1 + frenchDoorOffsetFromProjection,
@@ -1074,7 +1340,8 @@ rebuildFloorSlab();
   const rearWinGapFromDoor = 1.4;
   const rearWinW = 1.5;
   const rearWinH = 1.2;
-  const rearWinBottomY = 1.0;
+  // Rear window sill height measured from outdoor slab level.
+  const rearWinBottomY = outdoorSlabTopYForOpenings + 1.0;
   const rearWinZ0 = THREE.MathUtils.clamp(
     doorZ1 + rearWinGapFromDoor,
     wallZ0 + 0.05,

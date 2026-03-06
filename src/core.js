@@ -79,8 +79,8 @@ const SITE_LAYOUT = Object.freeze({
   housePathThickness: 0.038,        // concrete path thickness
 
   outdoorSlabHeight: 0.10,          // outdoor slab thickness
-  outdoorSlabProjectionX: 6.20,     // slab projection from back wall direction
-  outdoorSlabWidthZ: 4.94,          // slab width
+  outdoorSlabProjectionX: 4.94,     // slab projection from back wall direction
+  outdoorSlabWidthZ: 6.20,          // slab width (runs with the house)
   outdoorSlabStartAlongProjection: 0.27, // slab start from non-corner end of projection
 
   // Neighbor house (side boundary): update neighborFenceSetback as measured.
@@ -678,24 +678,33 @@ const claddingMat = new THREE.MeshStandardMaterial({
   metalness: 0.30
 });
 function makeMonumentAxonTexture() {
+  const HARDIE_GROOVE_SPACING_M = 0.12;
+  const HARDIE_REF_HEIGHT_M = 2.40;
+  const HARDIE_REF_V_REPEAT = 1.30;
   const cv = document.createElement('canvas');
-  cv.width = 512;
-  cv.height = 512;
+  cv.width = 960;
+  cv.height = 960;
   const ctx = cv.getContext('2d');
   if (!ctx) return null;
   ctx.fillStyle = '#43484f';
   ctx.fillRect(0, 0, cv.width, cv.height);
-  const groove = 42;
-  for (let x = 0; x < cv.width; x += groove) {
+  const groovePitchPx = 48; // 20 grooves across 960px tile
+  for (let x = 0; x < cv.width; x += groovePitchPx) {
     ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.fillRect(x, 0, 2, cv.height);
     ctx.fillStyle = 'rgba(0,0,0,0.14)';
     ctx.fillRect(x + 3, 0, 2, cv.height);
   }
+  const groovesPerTile = cv.width / groovePitchPx;
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(1.0, 1.3);
+  const spanU = 2.4;
+  const spanV = HARDIE_REF_HEIGHT_M;
+  tex.repeat.set(
+    Math.max(0.05, spanU / (HARDIE_GROOVE_SPACING_M * groovesPerTile)),
+    Math.max(0.12, HARDIE_REF_V_REPEAT * (spanV / HARDIE_REF_HEIGHT_M))
+  );
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
   if (renderer?.capabilities?.getMaxAnisotropy) {
@@ -704,11 +713,28 @@ function makeMonumentAxonTexture() {
   tex.needsUpdate = true;
   return tex;
 }
-const rearWallCladdingMat = new THREE.MeshLambertMaterial({
-  color: 0xffffff,
-  map: makeMonumentAxonTexture(),
-  side: THREE.DoubleSide,
-});
+function makeMonumentAxonMaterial(spanU=2.4, spanV=2.4, opts={}) {
+  const HARDIE_GROOVE_SPACING_M = 0.12;
+  const HARDIE_REF_HEIGHT_M = 2.40;
+  const HARDIE_REF_V_REPEAT = 1.30;
+  const tex = makeMonumentAxonTexture();
+  if (tex) {
+    const groovePitchPx = 48;
+    const groovesPerTile = 960 / groovePitchPx;
+    tex.repeat.set(
+      Math.max(0.05, spanU / (HARDIE_GROOVE_SPACING_M * groovesPerTile)),
+      Math.max(0.12, HARDIE_REF_V_REPEAT * (spanV / HARDIE_REF_HEIGHT_M))
+    );
+    tex.needsUpdate = true;
+  }
+  return new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    map: tex,
+    side: THREE.DoubleSide,
+    ...opts,
+  });
+}
+const rearWallCladdingMat = makeMonumentAxonMaterial(2.4, 2.4);
 const polyRoofMat = new THREE.MeshLambertMaterial({
   color: 0xbfd6ea,
   side: THREE.DoubleSide,

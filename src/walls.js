@@ -66,6 +66,17 @@ function roofUnderY(z) {
 const WALL_KICK_STRUCTURAL_DEPTH = 0.10;
 const WALL_KICK_STRUCTURAL_GAP = 0.001;
 
+function getRearShellCladdingMat(spanU, spanV, fallbackMat) {
+  if (typeof makeMonumentAxonMaterial === 'function') {
+    return makeMonumentAxonMaterial(
+      Math.max(0.05, Number(spanU) || 0.05),
+      Math.max(0.05, Number(spanV) || 0.05)
+    );
+  }
+  if (typeof rearWallCladdingMat !== 'undefined' && rearWallCladdingMat) return rearWallCladdingMat;
+  return fallbackMat || null;
+}
+
 // Flat panel for back walls: w wide, h tall (along face), leaning at r rad from vertical toward +Z.
 // Positioned at world (pivotX, startY, startZ), optional Y rotation.
 function makeFlatPanel(w, h, r, pivotX, startY, startZ, mat, facingY=0) {
@@ -871,9 +882,8 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
   const matKick = getWallMat(wallId, 'kick');
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
-  const rearShellMat = (typeof rearWallCladdingMat !== 'undefined' && rearWallCladdingMat)
-    ? rearWallCladdingMat
-    : matS2;
+  const rearShellKickMat = getRearShellCladdingMat(w, KICK, matKick) || matKick;
+  const rearShellBackMat = getRearShellCladdingMat(w, Math.max(0.05, roofBackY - KICK), matS2) || matS2;
   const xL = pivotX - w/2, xR = pivotX + w/2;
   const needsBackClosure = Math.abs(angleDeg) > 0.001;
 
@@ -885,7 +895,7 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
     w,
     KICK,
     WALL_KICK_STRUCTURAL_DEPTH,
-    rearShellMat,
+    rearShellKickMat,
     0, 0, 0,
     pivotX,
     KICK * 0.5,
@@ -901,7 +911,7 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
   }
 
   if (needsBackClosure) {
-    const backPanel = makeSideInfill(rearShellMat, [
+    const backPanel = makeSideInfill(rearShellBackMat, [
       {x:xL, y:KICK,     z:backZ},
       {x:xR, y:KICK,     z:backZ},
       {x:xR, y:roofBackY,z:backZ},
@@ -990,8 +1000,12 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
   const matKick = getWallMat(wallId, 'kick');
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
-  const rearShellMat = (wallId === 'A' && typeof rearWallCladdingMat !== 'undefined' && rearWallCladdingMat)
-    ? rearWallCladdingMat
+  const rearSpanH = Math.max(0.05, Math.max(roofY0, roofY1) - KICK);
+  const rearShellKickMat = (wallId === 'A')
+    ? (getRearShellCladdingMat(depth, KICK, matKick) || matKick)
+    : matKick;
+  const rearShellBackMat = (wallId === 'A')
+    ? (getRearShellCladdingMat(depth, rearSpanH, matS2) || matS2)
     : matS2;
   const mirrorU = wallId === 'A';
   const needsBackClosure = Math.abs(angleDeg) > 0.001;
@@ -1005,7 +1019,7 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
     WALL_KICK_STRUCTURAL_DEPTH,
     KICK,
     depth,
-    rearShellMat,
+    rearShellKickMat,
     0, 0, 0,
     -((WALL_KICK_STRUCTURAL_DEPTH * 0.5) + WALL_KICK_STRUCTURAL_GAP),
     KICK * 0.5,
@@ -1015,7 +1029,7 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
 
   if (needsBackClosure) {
     // Close the rear opening of the side-wall wedge on x=0.
-    const backPanel = makeSideInfill(rearShellMat, [
+    const backPanel = makeSideInfill(rearShellBackMat, [
       {x:backX, y:KICK, z:0},
       {x:backX, y:KICK, z:depth},
       {x:backX, y:roofY1, z:depth},
@@ -1135,9 +1149,8 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
   const matKick = getWallMat(wallId, 'kick');
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
-  const rearShellMat = (typeof rearWallCladdingMat !== 'undefined' && rearWallCladdingMat)
-    ? rearWallCladdingMat
-    : matS2;
+  const rearShellKickMat = getRearShellCladdingMat(w, KICK, matKick) || matKick;
+  const rearShellBackMat = getRearShellCladdingMat(w, Math.max(0.05, roofUnderY(backZ) - KICK), matS2) || matS2;
   const xL = pivotX - w/2;
   const xR = pivotX + w/2;
   const needsBackClosure = (Math.abs(angle1Deg) > 0.001) || (Math.abs(angle2Deg) > 0.001);
@@ -1149,7 +1162,7 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
     w,
     KICK,
     WALL_KICK_STRUCTURAL_DEPTH,
-    rearShellMat,
+    rearShellKickMat,
     0, 0, 0,
     pivotX,
     KICK * 0.5,
@@ -1175,7 +1188,7 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
   const splitZ = h1 * Math.tan(r1);
 
   if (needsBackClosure) {
-    const backPanel = makeSideInfill(rearShellMat, [
+    const backPanel = makeSideInfill(rearShellBackMat, [
       {x:xL, y:KICK,     z:backZ},
       {x:xR, y:KICK,     z:backZ},
       {x:xR, y:roofBackY,z:backZ},
@@ -2290,6 +2303,39 @@ function buildAdjPanel(group, adjLen, fixedSideLen) {
 
 function setAdjAngle(deg) {
   if (adjPivot) adjPivot.rotation.z = -deg * Math.PI / 180;
+}
+
+// Fills the rear A/B corner cavity created by the 100mm structural shell depth.
+// This prevents exposed interior ply from showing at the outside back corner.
+function buildRearABCornerShellCap(group) {
+  if (!group) return;
+  const shellDepth = Number(WALL_KICK_STRUCTURAL_DEPTH) || 0;
+  if (shellDepth <= 0.001) return;
+
+  const eps = (Number(WALL_KICK_STRUCTURAL_GAP) || 0) + 0.0005;
+  const xMin = -shellDepth - (Number(WALL_KICK_STRUCTURAL_GAP) || 0);
+  const zMin = -shellDepth - (Number(WALL_KICK_STRUCTURAL_GAP) || 0);
+  const xMax = -eps;
+  const zMax = -eps;
+  const capW = Math.max(0.01, xMax - xMin);
+  const capD = Math.max(0.01, zMax - zMin);
+  const capH = Math.max(0.05, roofUnderY(-shellDepth));
+
+  const mat = getRearShellCladdingMat(capW, capH, getWallMat('B', 's2')) || getWallMat('B', 's2');
+
+  const cap = box(
+    capW,
+    capH,
+    capD,
+    mat,
+    0, 0, 0,
+    (xMin + xMax) * 0.5,
+    capH * 0.5,
+    (zMin + zMax) * 0.5
+  );
+  cap.castShadow = true;
+  cap.receiveShadow = true;
+  group.add(cap);
 }
 
 // Visual guide: seam where A and B meet.
