@@ -181,15 +181,91 @@ function updateEnvironmentAnchors() {
   if (environmentGrass) environmentGrass.position.set(W * 0.5, -0.051, D * 0.5);
 }
 
+const REBUILD_STAGE = Object.freeze({
+  GEOMETRY: 'geometry',
+  ANNOTATIONS: 'annotations',
+  CRASH_MATS: 'crashMats',
+});
+const REBUILD_ALL_STAGES = Object.freeze([
+  REBUILD_STAGE.GEOMETRY,
+  REBUILD_STAGE.ANNOTATIONS,
+  REBUILD_STAGE.CRASH_MATS,
+]);
+let rebuildDirtyStages = new Set(REBUILD_ALL_STAGES);
+
+function normalizeRebuildStages(stages) {
+  if (!Array.isArray(stages)) return [];
+  const valid = new Set(REBUILD_ALL_STAGES);
+  return stages.filter(stage => valid.has(stage));
+}
+
+function invalidateRebuildStages(stages=REBUILD_ALL_STAGES) {
+  normalizeRebuildStages(stages).forEach(stage => rebuildDirtyStages.add(stage));
+}
+
+function resolveRebuildPlan(options={}) {
+  const useDirty = !!options.useDirty;
+  let stages = [];
+  if (Array.isArray(options.stages) && options.stages.length) {
+    stages = normalizeRebuildStages(options.stages);
+  } else if (useDirty) {
+    stages = normalizeRebuildStages(Array.from(rebuildDirtyStages));
+  } else {
+    stages = REBUILD_ALL_STAGES.slice();
+  }
+  if (!stages.length) {
+    return {geometry: false, annotations: false, crashMats: false, stages: []};
+  }
+
+  const stageSet = new Set(stages);
+  // Geometry changes invalidate all dependent stages.
+  if (stageSet.has(REBUILD_STAGE.GEOMETRY)) {
+    stageSet.add(REBUILD_STAGE.ANNOTATIONS);
+    stageSet.add(REBUILD_STAGE.CRASH_MATS);
+  }
+  // Annotation changes should clear hover overlays too.
+  if (stageSet.has(REBUILD_STAGE.ANNOTATIONS)) {
+    stageSet.add(REBUILD_STAGE.CRASH_MATS);
+  }
+  return {
+    geometry: stageSet.has(REBUILD_STAGE.GEOMETRY),
+    annotations: stageSet.has(REBUILD_STAGE.ANNOTATIONS),
+    crashMats: stageSet.has(REBUILD_STAGE.CRASH_MATS),
+    stages: Array.from(stageSet),
+  };
+}
+
+if (typeof window !== 'undefined') {
+  window.REBUILD_STAGE = REBUILD_STAGE;
+  window.invalidateRebuildStages = invalidateRebuildStages;
+}
+
 // ── Main rebuild ──
-function rebuild() {
-  // Clear dynamic groups
-  while(wallGroup.children.length) wallGroup.remove(wallGroup.children[0]);
-  while(dimGroup.children.length)  dimGroup.remove(dimGroup.children[0]);
-  while(labelGroup.children.length) labelGroup.remove(labelGroup.children[0]);
-  while(hoverDimGroup.children.length) hoverDimGroup.remove(hoverDimGroup.children[0]);
-  hoverTargets.length = 0;
-  adjPivot = null;
+function rebuild(options={}) {
+  const plan = resolveRebuildPlan(options);
+  if (!plan.geometry && !plan.annotations && !plan.crashMats) return;
+
+  if (plan.geometry) {
+    while(wallGroup.children.length) wallGroup.remove(wallGroup.children[0]);
+    while(dimGroup.children.length)  dimGroup.remove(dimGroup.children[0]);
+    while(labelGroup.children.length) labelGroup.remove(labelGroup.children[0]);
+    while(hoverDimGroup.children.length) hoverDimGroup.remove(hoverDimGroup.children[0]);
+    hoverTargets.length = 0;
+    adjPivot = null;
+  } else if (plan.annotations) {
+    while(dimGroup.children.length)  dimGroup.remove(dimGroup.children[0]);
+    while(labelGroup.children.length) labelGroup.remove(labelGroup.children[0]);
+    while(hoverDimGroup.children.length) hoverDimGroup.remove(hoverDimGroup.children[0]);
+  }
+
+  if (options.useDirty) {
+    plan.stages.forEach(stage => rebuildDirtyStages.delete(stage));
+  }
+
+  if (!plan.geometry && !plan.annotations) {
+    if (plan.crashMats) rebuildCrashMatsGeometry();
+    return;
+  }
 
   const s = wallState;
   const dWidth = Math.max(0.1, W - s.bWidth - s.cWidth); // D fills remainder
@@ -236,31 +312,34 @@ function rebuild() {
     D
   );
 
-  // ── Fixed walls ──
-  buildBackSection(wallGroup, s.bWidth, s.bAngle, s.bWidth/2,                       fixedSideLen, 'B');
-  buildBackSection(wallGroup, s.cWidth, s.cAngle, s.bWidth + s.cWidth/2,            fixedSideLen, 'C');
-  buildBackSectionTwoStage(wallGroup, dWidth, s.dAngle, s.d2Angle, s.bWidth + s.cWidth + dWidth/2, s.d1Height, 'D');
-  buildSideSection(wallGroup, fixedSideLen, s.aAngle, fixedSideLen, 'A');
-  buildFWall(wallGroup, s.f1Width, s.f1Angle, s.f2Angle, s.f2WidthTop, s.f1Height);
-  buildRearABCornerShellCap(wallGroup);
-  buildTrainingRig(wallGroup, s);
-  buildCampusBoardOnD(wallGroup, s);
-  buildConceptVolumes(wallGroup, s);
+  if (plan.geometry) {
+    // ── Fixed walls ──
+    buildBackSection(wallGroup, s.bWidth, s.bAngle, s.bWidth/2,                       fixedSideLen, 'B');
+    buildBackSection(wallGroup, s.cWidth, s.cAngle, s.bWidth + s.cWidth/2,            fixedSideLen, 'C');
+    buildBackSectionTwoStage(wallGroup, dWidth, s.dAngle, s.d2Angle, s.bWidth + s.cWidth + dWidth/2, s.d1Height, 'D');
+    buildSideSection(wallGroup, fixedSideLen, s.aAngle, fixedSideLen, 'A');
+    buildFWall(wallGroup, s.f1Width, s.f1Angle, s.f2Angle, s.f2WidthTop, s.f1Height);
+    buildRearABCornerShellCap(wallGroup);
+    buildTrainingRig(wallGroup, s);
+    buildCampusBoardOnD(wallGroup, s);
+    buildConceptVolumes(wallGroup, s);
 
-  // Apply collision clipping
-  applyClipping(s);
+    // Apply collision clipping
+    applyClipping(s);
 
-  // ── L-shaped roof cap ──
-  buildLRoof(wallGroup, fixedSideLen, dWidth, s.f2WidthTop, dRoofZ, fRoofZ);
-  buildESupportPost(wallGroup, fixedSideLen);
-  buildPolyRoofExtension(wallGroup, fixedSideLen, s.f2WidthTop);
-  buildCeilingPanelHolds(wallGroup);
+    // ── L-shaped roof cap ──
+    buildLRoof(wallGroup, fixedSideLen, dWidth, s.f2WidthTop, dRoofZ, fRoofZ);
+    buildESupportPost(wallGroup, fixedSideLen);
+    buildPolyRoofExtension(wallGroup, fixedSideLen, s.f2WidthTop);
+    buildCeilingPanelHolds(wallGroup);
 
-  // ── Adjustable panel ──
-  buildAdjPanel(wallGroup, adjLen, fixedSideLen);
-  buildClimbingHolds(wallGroup, s);
-  buildABCornerGuide(wallGroup, s, fixedSideLen);
+    // ── Adjustable panel ──
+    buildAdjPanel(wallGroup, adjLen, fixedSideLen);
+    buildClimbingHolds(wallGroup, s);
+    buildABCornerGuide(wallGroup, s, fixedSideLen);
+  }
 
+  if (plan.annotations) {
   // ── Labels ──
   function findWallLabelMesh(wallId) {
     const matches = hoverTargets.filter(m => m.userData?.sectionInfo?.wall === wallId);
@@ -544,8 +623,9 @@ function rebuild() {
   arcText.scale.set(0.50, 0.125, 1);
   arcText.position.copy(eArcPt((arcMin + arcMax) / 2)).add(new THREE.Vector3(0.28, 0.18, 0));
   dimGroup.add(arcText);
+  }
 
-  rebuildCrashMatsGeometry();
+  if (plan.crashMats) rebuildCrashMatsGeometry();
 }
 
 // Initial build

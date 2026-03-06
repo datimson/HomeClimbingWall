@@ -58,14 +58,18 @@ function persistCurrentCameraState() {
 const REBUILD_THROTTLE_MS = 40;
 let queuedRebuildTimer = 0;
 let lastRebuildAt = 0;
-function requestRebuild({immediate=false} = {}) {
+function requestRebuild({immediate=false, stages=null} = {}) {
   if (typeof rebuild !== 'function') return;
+  if (typeof invalidateRebuildStages === 'function') {
+    if (Array.isArray(stages) && stages.length) invalidateRebuildStages(stages);
+    else invalidateRebuildStages();
+  }
   const run = () => {
     lastRebuildAt = performance.now();
     if (typeof window?.syncAppStateFromCore === 'function') {
       window.syncAppStateFromCore('ui:requestRebuild');
     }
-    rebuild();
+    rebuild({useDirty: true});
   };
   if (immediate) {
     if (queuedRebuildTimer) {
@@ -244,6 +248,7 @@ const VR_MENU_CLOSE_HOVER_COLOR = 0x90a4b9;
 const VR_MENU_TRACK_HOVER_COLOR = 0xb8a17c;
 const VR_MENU_FILL_HOVER_COLOR = 0x8f7450;
 const VR_MENU_KNOB_HOVER_COLOR = 0xf0cf98;
+const VR_MENU_NUDGE_COLOR = 0xb7c0c9;
 const VR_MENU_CURSOR_COLOR = 0x000000;
 const VR_MENU_CURSOR_RADIUS = 0.003;
 const VR_MENU_CURSOR_OFFSET = 0.008;
@@ -707,13 +712,19 @@ function buildVrQuickMenu(target) {
   if (hasRows) {
     const labelW = Math.max(0.18, Math.min(0.24, innerWidth * 0.33));
     const valueW = Math.max(0.13, Math.min(0.17, innerWidth * 0.22));
-    const gapA = 0.028;
-    const gapB = 0.028;
-    const trackW = Math.max(0.16, innerWidth - labelW - valueW - gapA - gapB);
+    const nudgeW = 0.055;
+    const nudgeH = 0.052;
+    const gapA = 0.018;
+    const gapB = 0.012;
+    const gapC = 0.012;
+    const gapD = 0.018;
+    const trackW = Math.max(0.14, innerWidth - labelW - valueW - nudgeW - nudgeW - gapA - gapB - gapC - gapD);
     const trackH = 0.032;
     const leftLabelX = innerLeft + labelW * 0.5;
-    const trackCenterX = innerLeft + labelW + gapA + trackW * 0.5;
-    const valueX = innerLeft + labelW + gapA + trackW + gapB + valueW * 0.5;
+    const minusX = innerLeft + labelW + gapA + nudgeW * 0.5;
+    const trackCenterX = innerLeft + labelW + gapA + nudgeW + gapB + trackW * 0.5;
+    const plusX = innerLeft + labelW + gapA + nudgeW + gapB + trackW + gapC + nudgeW * 0.5;
+    const valueX = innerLeft + labelW + gapA + nudgeW + gapB + trackW + gapC + nudgeW + gapD + valueW * 0.5;
     keys.forEach((key, idx) => {
       const def = VR_MENU_SLIDERS[key];
       if (!def) return;
@@ -745,6 +756,11 @@ function buildVrQuickMenu(target) {
       track.position.set(trackCenterX, y, 0.003);
       track.userData.vrMenuAction = {type: 'sliderTrack', key};
       group.add(track);
+
+      const minusBtn = makeVrMenuButton('−', nudgeW, nudgeH, VR_MENU_NUDGE_COLOR);
+      minusBtn.position.set(minusX, y, 0.003);
+      minusBtn.userData.vrMenuAction = {type: 'sliderNudge', key, delta: -1};
+      group.add(minusBtn);
 
       const fill = new THREE.Mesh(
         new THREE.PlaneGeometry(trackW, trackH * 0.78),
@@ -778,6 +794,11 @@ function buildVrQuickMenu(target) {
       knob.userData.vrMenuAction = {type: 'sliderTrack', key};
       group.add(knob);
 
+      const plusBtn = makeVrMenuButton('+', nudgeW, nudgeH, VR_MENU_NUDGE_COLOR);
+      plusBtn.position.set(plusX, y, 0.003);
+      plusBtn.userData.vrMenuAction = {type: 'sliderNudge', key, delta: 1};
+      group.add(plusBtn);
+
       const valueLabel = makeVrTextPlane(def.fmt(v), valueW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
         fontPx: 49,
@@ -788,12 +809,25 @@ function buildVrQuickMenu(target) {
       valueLabel.position.set(valueX, y, 0.004);
       group.add(valueLabel);
 
-      const slider = {key, def, track, fill, knob, valueLabel, trackWidth: trackW, trackCenterX};
+      const slider = {
+        key,
+        def,
+        track,
+        fill,
+        knob,
+        valueLabel,
+        minusBtn,
+        plusBtn,
+        trackWidth: trackW,
+        trackCenterX
+      };
       slidersByKey[key] = slider;
       updateVrMenuSliderVisual(slider, v);
 
+      interactive.push(minusBtn);
       interactive.push(track);
       interactive.push(knob);
+      interactive.push(plusBtn);
     });
     if (hasHeightRecalc) {
       const y = halfH - 0.155 - keys.length * rowH;
@@ -988,6 +1022,17 @@ function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=f
   }
   if (action.type === 'close') {
     clearVrQuickMenu();
+    return true;
+  }
+  if (action.type === 'sliderNudge' && action.key) {
+    const def = VR_MENU_SLIDERS[action.key];
+    if (!def) return false;
+    const curr = quantizeVrSliderValue(def, getVrMenuCurrentValue(action.key, def));
+    const dir = Math.sign(Number(action.delta) || 0);
+    if (!Number.isFinite(curr) || !dir) return false;
+    const step = Number(def.step) || 1;
+    const next = curr + (dir * step);
+    applyVrMenuStateKey(action.key, next);
     return true;
   }
   if (action.type === 'sliderTrack' && action.key) {
