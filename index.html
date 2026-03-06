@@ -26,6 +26,15 @@
 
   <div class="panel">
     <div class="section">
+      <h2>Wall Design</h2>
+      <div class="design-row">
+        <label class="design-label" for="designSelect">Active Design</label>
+        <select id="designSelect" class="design-select"></select>
+      </div>
+      <div class="control-note">Switching design reloads with design-specific defaults and saved state.</div>
+    </div>
+
+    <div class="section">
       <h2>Display Toggles</h2>
       <div class="toggle-row">
         <label class="toggle-label" for="trainingRigToggle">Bracket + Hangboard</label>
@@ -90,6 +99,42 @@
           <span class="toggle-meta">E +0.15m clear</span>
         </div>
       </div>
+    </div>
+
+    <div class="section">
+      <h2>Measure Tool</h2>
+      <div class="toggle-row">
+        <label class="toggle-label" for="measureToolToggle">Enable Measure</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="measureToolToggle">
+          <span class="toggle-meta">click start/end</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="measureSnapSurfaceToggle">Snap Surfaces</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="measureSnapSurfaceToggle">
+          <span class="toggle-meta">face hit</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="measureSnapEdgeToggle">Snap Edges</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="measureSnapEdgeToggle">
+          <span class="toggle-meta">triangle edge</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="measureSnapPointToggle">Snap Points</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="measureSnapPointToggle">
+          <span class="toggle-meta">vertices</span>
+        </div>
+      </div>
+      <div class="control-actions">
+        <button id="measureClearBtn" class="action-btn action-btn--ghost" type="button">Clear Measurements</button>
+      </div>
+      <div class="control-note">Desktop: left click to set start, move pointer to preview, click again to place end. Right click or Esc cancels active preview.</div>
     </div>
 
     <div class="section section-collapsible">

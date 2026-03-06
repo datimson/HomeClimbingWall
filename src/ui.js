@@ -30,6 +30,15 @@ let dimsAreFaded = false;
 let sceneIsFaded = false;
 let focusedMaterialEntries = [];
 let activeFocusMesh = null;
+const measureRaycaster = new THREE.Raycaster();
+const measureMouse = new THREE.Vector2();
+const measureScratchVec = new THREE.Vector3();
+const measureScratchA = new THREE.Vector3();
+const measureScratchB = new THREE.Vector3();
+const measureScratchC = new THREE.Vector3();
+const measureOverlayGroup = new THREE.Group();
+measureOverlayGroup.name = 'measureOverlay';
+scene.add(measureOverlayGroup);
 const personLookAtTarget = new THREE.Vector3();
 const xrRig = new THREE.Group();
 xrRig.name = 'xrRig';
@@ -58,6 +67,11 @@ function persistCurrentCameraState() {
 const REBUILD_THROTTLE_MS = 40;
 let queuedRebuildTimer = 0;
 let lastRebuildAt = 0;
+const UI_REBUILD_STAGE = Object.freeze({
+  GEOMETRY: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.GEOMETRY) ? REBUILD_STAGE.GEOMETRY : 'geometry',
+  ANNOTATIONS: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.ANNOTATIONS) ? REBUILD_STAGE.ANNOTATIONS : 'annotations',
+  CRASH_MATS: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.CRASH_MATS) ? REBUILD_STAGE.CRASH_MATS : 'crashMats',
+});
 function requestRebuild({immediate=false, stages=null} = {}) {
   if (typeof rebuild !== 'function') return;
   if (typeof invalidateRebuildStages === 'function') {
@@ -86,6 +100,413 @@ function requestRebuild({immediate=false, stages=null} = {}) {
     queuedRebuildTimer = 0;
     run();
   }, wait);
+}
+
+const RUNTIME_DESIGN_SYSTEM = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallDesignSystem
+) ? window.ClimbingWallDesignSystem : null;
+
+function getAvailableDesignDefs() {
+  if (!RUNTIME_DESIGN_SYSTEM || typeof RUNTIME_DESIGN_SYSTEM.listDesigns !== 'function') return [];
+  const defs = RUNTIME_DESIGN_SYSTEM.listDesigns();
+  return Array.isArray(defs) ? defs : [];
+}
+
+function getActiveDesignIdSafe() {
+  if (!RUNTIME_DESIGN_SYSTEM || typeof RUNTIME_DESIGN_SYSTEM.getActiveDesignId !== 'function') return 'classic';
+  const id = RUNTIME_DESIGN_SYSTEM.getActiveDesignId();
+  return (typeof id === 'string' && id) ? id : 'classic';
+}
+
+function switchDesignAndReload(designId) {
+  if (!RUNTIME_DESIGN_SYSTEM || typeof RUNTIME_DESIGN_SYSTEM.setActiveDesignId !== 'function') return false;
+  const next = String(designId || '').trim();
+  if (!next) return false;
+  if (next === getActiveDesignIdSafe()) return true;
+  const ok = RUNTIME_DESIGN_SYSTEM.setActiveDesignId(next);
+  if (!ok) return false;
+  if (typeof window?.syncAppStateFromCore === 'function') {
+    window.syncAppStateFromCore('ui:design:switch');
+  }
+  window.setTimeout(() => window.location.reload(), 30);
+  return true;
+}
+
+function getMeasurementStorageKey() {
+  if (RUNTIME_DESIGN_SYSTEM && typeof RUNTIME_DESIGN_SYSTEM.getMeasurementStorageKey === 'function') {
+    return RUNTIME_DESIGN_SYSTEM.getMeasurementStorageKey(getActiveDesignIdSafe());
+  }
+  const active = getActiveDesignIdSafe();
+  if (active === 'classic') return 'climbingWall.measureTool.v1';
+  return `climbingWall.${active}.measureTool.v1`;
+}
+
+function getMeasurementDefaults() {
+  const fallback = {
+    enabled: false,
+    snapToVertices: true,
+    snapToEdges: true,
+    snapToSurfaces: true,
+    showDeltaAxes: true,
+    units: 'metric',
+  };
+  const planned = RUNTIME_DESIGN_SYSTEM?.measurementToolPlan?.defaults;
+  if (!planned || typeof planned !== 'object') return fallback;
+  return {
+    ...fallback,
+    ...planned,
+  };
+}
+
+const MEASUREMENT_STORAGE_KEY = getMeasurementStorageKey();
+const MEASUREMENT_DEFAULTS = getMeasurementDefaults();
+
+function loadMeasurementSettings() {
+  const out = {...MEASUREMENT_DEFAULTS};
+  if (typeof localStorage === 'undefined') return out;
+  try {
+    const raw = localStorage.getItem(MEASUREMENT_STORAGE_KEY);
+    if (!raw) return out;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return out;
+    if (typeof parsed.enabled === 'boolean') out.enabled = parsed.enabled;
+    if (typeof parsed.snapToVertices === 'boolean') out.snapToVertices = parsed.snapToVertices;
+    if (typeof parsed.snapToEdges === 'boolean') out.snapToEdges = parsed.snapToEdges;
+    if (typeof parsed.snapToSurfaces === 'boolean') out.snapToSurfaces = parsed.snapToSurfaces;
+    if (typeof parsed.showDeltaAxes === 'boolean') out.showDeltaAxes = parsed.showDeltaAxes;
+    if (typeof parsed.units === 'string' && parsed.units) out.units = parsed.units;
+    return out;
+  } catch (_) {
+    return out;
+  }
+}
+
+function saveMeasurementSettings(settings) {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(MEASUREMENT_STORAGE_KEY, JSON.stringify(settings));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+const measureTool = {
+  settings: loadMeasurementSettings(),
+  start: null,
+  preview: null,
+  dragging: false,
+  hasDragged: false,
+  startMeta: null,
+  previewMeta: null,
+  segments: [],
+};
+
+function syncMeasurementToAppState(source='ui:measure') {
+  const app = window?.ClimbingWallAppState;
+  if (!app || typeof app.patchState !== 'function') return;
+  app.patchState({
+    tools: {
+      measurement: {
+        ...measureTool.settings,
+        active: !!measureTool.start,
+        segmentCount: measureTool.segments.length,
+      },
+    },
+  }, {source, emit: true});
+}
+
+function clearMeasureOverlayGroup() {
+  while (measureOverlayGroup.children.length) {
+    const child = measureOverlayGroup.children.pop();
+    measureOverlayGroup.remove(child);
+    child.traverse(obj => {
+      if (obj.geometry && typeof obj.geometry.dispose === 'function') obj.geometry.dispose();
+      const mats = Array.isArray(obj.material) ? obj.material : (obj.material ? [obj.material] : []);
+      mats.forEach(mat => {
+        if (!mat) return;
+        if (mat.map && typeof mat.map.dispose === 'function') mat.map.dispose();
+        if (typeof mat.dispose === 'function') mat.dispose();
+      });
+    });
+  }
+}
+
+function formatMeasureLabel(start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dz = end.z - start.z;
+  const dist = Math.hypot(dx, dy, dz);
+  return `${dist.toFixed(3)}m`;
+}
+
+function drawMeasureMarker(point, color=0xffaa55, size=0.05) {
+  if (!point) return;
+  const sx = size;
+  const sy = size;
+  const sz = size;
+  measureOverlayGroup.add(dimLine3(
+    new THREE.Vector3(point.x - sx, point.y, point.z),
+    new THREE.Vector3(point.x + sx, point.y, point.z),
+    color
+  ));
+  measureOverlayGroup.add(dimLine3(
+    new THREE.Vector3(point.x, point.y - sy, point.z),
+    new THREE.Vector3(point.x, point.y + sy, point.z),
+    color
+  ));
+  measureOverlayGroup.add(dimLine3(
+    new THREE.Vector3(point.x, point.y, point.z - sz),
+    new THREE.Vector3(point.x, point.y, point.z + sz),
+    color
+  ));
+}
+
+function drawMeasureAxes(start, end) {
+  if (!measureTool.settings.showDeltaAxes) return;
+  const dx = Math.abs(end.x - start.x);
+  const dy = Math.abs(end.y - start.y);
+  const dz = Math.abs(end.z - start.z);
+  const pX = new THREE.Vector3(end.x, start.y, start.z);
+  const pY = new THREE.Vector3(end.x, end.y, start.z);
+  if (dx > 0.01) addDim(measureOverlayGroup, start, pX, `dx ${dx.toFixed(2)}m`, 0xe38585);
+  if (dy > 0.01) addDim(measureOverlayGroup, pX, pY, `dy ${dy.toFixed(2)}m`, 0x8ccf8c);
+  if (dz > 0.01) addDim(measureOverlayGroup, pY, end, `dz ${dz.toFixed(2)}m`, 0x86b7e6);
+}
+
+function renderMeasureOverlay() {
+  clearMeasureOverlayGroup();
+  measureTool.segments.forEach(seg => {
+    addDim(measureOverlayGroup, seg.start, seg.end, formatMeasureLabel(seg.start, seg.end), 0xf4d072);
+    drawMeasureAxes(seg.start, seg.end);
+    drawMeasureMarker(seg.start, 0xf4d072, 0.035);
+    drawMeasureMarker(seg.end, 0xf4d072, 0.035);
+  });
+  if (measureTool.start && measureTool.preview) {
+    addDim(measureOverlayGroup, measureTool.start, measureTool.preview, formatMeasureLabel(measureTool.start, measureTool.preview), 0xffb84d);
+    drawMeasureAxes(measureTool.start, measureTool.preview);
+    drawMeasureMarker(measureTool.start, 0xffb84d, 0.045);
+    drawMeasureMarker(measureTool.preview, 0xffb84d, 0.04);
+  } else if (measureTool.start) {
+    drawMeasureMarker(measureTool.start, 0xffb84d, 0.045);
+  }
+}
+
+function clearMeasurements({segments=true, active=true} = {}) {
+  if (segments) measureTool.segments.length = 0;
+  if (active) {
+    measureTool.start = null;
+    measureTool.preview = null;
+    measureTool.startMeta = null;
+    measureTool.previewMeta = null;
+    measureTool.dragging = false;
+    measureTool.hasDragged = false;
+  }
+  renderMeasureOverlay();
+  syncMeasurementToAppState('ui:measure:clear');
+}
+
+function isMeasurementTargetMesh(obj) {
+  if (!obj?.isMesh || !obj.visible || !obj.geometry) return false;
+  if (obj.userData?.isHold) return false;
+  if (obj.userData?.vrMenuAction) return false;
+  if (obj.userData?.sectionInfo || obj.userData?.isCeilingPanel || obj.userData?.context || obj.userData?.isConceptVolume) return true;
+  const box = obj.geometry.boundingBox;
+  if (!box) {
+    obj.geometry.computeBoundingBox();
+  }
+  const bb = obj.geometry.boundingBox;
+  if (!bb) return false;
+  const size = measureScratchVec.copy(bb.max).sub(bb.min);
+  return Math.max(size.x, size.y, size.z) >= 0.12;
+}
+
+function getMeasurementHit(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+  measureMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  measureMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  measureRaycaster.setFromCamera(measureMouse, camera);
+  const roots = [];
+  if (wallGroup) roots.push(wallGroup);
+  if (crashMatsGroup?.visible) roots.push(crashMatsGroup);
+  if (environmentGroup?.visible) roots.push(environmentGroup);
+  if (!roots.length) return null;
+  const hits = measureRaycaster.intersectObjects(roots, true);
+  return hits.find(hit => isMeasurementTargetMesh(hit.object)) || null;
+}
+
+function getHitTriangleVerticesWorld(hit) {
+  const obj = hit?.object;
+  const geo = obj?.geometry;
+  const pos = geo?.attributes?.position;
+  if (!obj || !geo || !pos) return null;
+  const index = geo.index;
+  const faceIndex = Number(hit.faceIndex);
+  if (!Number.isFinite(faceIndex) || faceIndex < 0) return null;
+  let i0 = 0;
+  let i1 = 1;
+  let i2 = 2;
+  if (index) {
+    i0 = index.getX(faceIndex * 3);
+    i1 = index.getX(faceIndex * 3 + 1);
+    i2 = index.getX(faceIndex * 3 + 2);
+  } else {
+    i0 = faceIndex * 3;
+    i1 = faceIndex * 3 + 1;
+    i2 = faceIndex * 3 + 2;
+  }
+  if (i2 >= pos.count) return null;
+  const a = new THREE.Vector3().fromBufferAttribute(pos, i0);
+  const b = new THREE.Vector3().fromBufferAttribute(pos, i1);
+  const c = new THREE.Vector3().fromBufferAttribute(pos, i2);
+  obj.localToWorld(a);
+  obj.localToWorld(b);
+  obj.localToWorld(c);
+  return [a, b, c];
+}
+
+function closestPointOnSegment(point, a, b, outVec) {
+  const ab = measureScratchA.copy(b).sub(a);
+  const lenSq = ab.lengthSq();
+  if (lenSq < 1e-10) return outVec.copy(a);
+  const t = THREE.MathUtils.clamp(measureScratchB.copy(point).sub(a).dot(ab) / lenSq, 0, 1);
+  return outVec.copy(a).addScaledVector(ab, t);
+}
+
+function resolveMeasurementSnap(hit) {
+  if (!hit?.point) return null;
+  const basePoint = hit.point.clone();
+  const camDist = camera.position.distanceTo(basePoint);
+  const snapDist = Math.max(0.025, camDist * 0.016);
+  const triVerts = getHitTriangleVerticesWorld(hit);
+  let snapped = null;
+  let snapType = null;
+  let bestDist = Infinity;
+
+  if (triVerts && measureTool.settings.snapToVertices) {
+    triVerts.forEach(v => {
+      const d = v.distanceTo(basePoint);
+      if (d <= snapDist && d < bestDist) {
+        bestDist = d;
+        snapped = v.clone();
+        snapType = 'vertex';
+      }
+    });
+  }
+
+  if (triVerts && measureTool.settings.snapToEdges) {
+    const edges = [
+      [triVerts[0], triVerts[1]],
+      [triVerts[1], triVerts[2]],
+      [triVerts[2], triVerts[0]],
+    ];
+    edges.forEach(([a, b]) => {
+      const p = closestPointOnSegment(basePoint, a, b, new THREE.Vector3());
+      const d = p.distanceTo(basePoint);
+      if (d <= snapDist * 1.15 && d < bestDist) {
+        bestDist = d;
+        snapped = p.clone();
+        snapType = 'edge';
+      }
+    });
+  }
+
+  if (!snapped && !measureTool.settings.snapToSurfaces) return null;
+  if (!snapped) {
+    snapped = basePoint.clone();
+    snapType = 'surface';
+  }
+
+  return {
+    point: snapped,
+    type: snapType,
+    object: hit.object,
+  };
+}
+
+function pickMeasurementPoint(clientX, clientY) {
+  const hit = getMeasurementHit(clientX, clientY);
+  if (!hit) return null;
+  return resolveMeasurementSnap(hit);
+}
+
+function commitMeasurementSegment(start, end, meta={}) {
+  if (!start || !end) return false;
+  if (start.distanceTo(end) < 0.01) return false;
+  measureTool.segments.push({
+    start: start.clone(),
+    end: end.clone(),
+    meta: {...meta},
+  });
+  if (measureTool.segments.length > 16) measureTool.segments.shift();
+  return true;
+}
+
+function updateMeasurePointerMove(clientX, clientY) {
+  if (!measureTool.settings.enabled || !measureTool.start) return false;
+  const snap = pickMeasurementPoint(clientX, clientY);
+  if (!snap) return true;
+  measureTool.preview = snap.point.clone();
+  measureTool.previewMeta = snap;
+  if (measureTool.start.distanceTo(measureTool.preview) > 0.005) {
+    measureTool.hasDragged = true;
+  }
+  renderMeasureOverlay();
+  return true;
+}
+
+function handleMeasureMouseDown(e) {
+  if (!measureTool.settings.enabled) return false;
+  if (e.button !== 0) return false;
+  const snap = pickMeasurementPoint(e.clientX, e.clientY);
+  if (!snap) return false;
+  if (!measureTool.start) {
+    measureTool.start = snap.point.clone();
+    measureTool.startMeta = snap;
+  } else {
+    measureTool.preview = snap.point.clone();
+    measureTool.previewMeta = snap;
+  }
+  measureTool.dragging = true;
+  measureTool.hasDragged = false;
+  renderMeasureOverlay();
+  e.preventDefault();
+  return true;
+}
+
+function handleMeasureMouseUp(e) {
+  if (!measureTool.settings.enabled || !measureTool.dragging) return false;
+  if (e.button !== 0) return false;
+  measureTool.dragging = false;
+  if (!measureTool.start || !measureTool.preview) return true;
+  const shouldCommit = measureTool.hasDragged || measureTool.start.distanceTo(measureTool.preview) > 0.05;
+  if (shouldCommit && commitMeasurementSegment(measureTool.start, measureTool.preview, {
+    startType: measureTool.startMeta?.type || 'surface',
+    endType: measureTool.previewMeta?.type || 'surface',
+  })) {
+    measureTool.start = null;
+    measureTool.preview = null;
+    measureTool.startMeta = null;
+    measureTool.previewMeta = null;
+    syncMeasurementToAppState('ui:measure:commit');
+  }
+  renderMeasureOverlay();
+  return true;
+}
+
+function cancelActiveMeasurement() {
+  if (!measureTool.start && !measureTool.dragging) return false;
+  measureTool.start = null;
+  measureTool.preview = null;
+  measureTool.startMeta = null;
+  measureTool.previewMeta = null;
+  measureTool.dragging = false;
+  measureTool.hasDragged = false;
+  renderMeasureOverlay();
+  syncMeasurementToAppState('ui:measure:cancel');
+  return true;
 }
 
 const XR_FLOOR_EYE_HEIGHT = 1.72;
@@ -575,6 +996,12 @@ function vrMenuTitleForTarget(target) {
   return `Wall ${target}`;
 }
 
+function getVrMenuDesignDefs() {
+  const defs = getAvailableDesignDefs();
+  if (defs.length) return defs;
+  return [{id: getActiveDesignIdSafe(), label: getActiveDesignIdSafe(), status: 'active'}];
+}
+
 function applyVrMenuStateKey(key, nextValue) {
   const def = VR_MENU_SLIDERS[key];
   if (!def) return;
@@ -600,7 +1027,7 @@ function applyVrMenuStateKey(key, nextValue) {
   if (key === 'eAngle') {
     eSweepAnim.active = false;
     setEAngleValue(clamped);
-    requestRebuild();
+    requestRebuild({stages: [UI_REBUILD_STAGE.GEOMETRY]});
     return;
   }
 
@@ -618,7 +1045,7 @@ function applyVrMenuStateKey(key, nextValue) {
   wallState[key] = (typeof clampWallStateValue === 'function') ? clampWallStateValue(key, clamped) : clamped;
   if (key === 'eAngle' && typeof setAdjAngle === 'function') setAdjAngle(wallState.eAngle);
   syncSlidersFromState();
-  requestRebuild();
+  requestRebuild({stages: [UI_REBUILD_STAGE.GEOMETRY]});
   refreshVrQuickMenuValues();
 }
 
@@ -662,9 +1089,12 @@ function buildVrQuickMenu(target) {
   const width = VR_MENU_BASE_WIDTH;
   const rowH = VR_MENU_ROW_HEIGHT;
   const hasHeightRecalc = target === 'S';
-  const hasRows = keys.length > 0;
-  const extraRows = hasHeightRecalc ? 1 : 0;
-  const height = hasRows ? (0.20 + (keys.length + extraRows) * rowH) : (hasHeightRecalc ? 0.38 : 0.28);
+  const designDefs = target === 'S' ? getVrMenuDesignDefs().filter(def => !!def?.id) : [];
+  const hasDesignSwitcher = target === 'S' && designDefs.length > 1;
+  const sliderRows = keys.length;
+  const extraRows = (hasHeightRecalc ? 1 : 0) + (hasDesignSwitcher ? 1 : 0);
+  const hasRows = (sliderRows + extraRows) > 0;
+  const height = hasRows ? (0.20 + (sliderRows + extraRows) * rowH) : 0.28;
   const halfW = width * 0.5;
   const halfH = height * 0.5;
   const innerLeft = -halfW + VR_MENU_PADDING_X;
@@ -725,11 +1155,49 @@ function buildVrQuickMenu(target) {
     const trackCenterX = innerLeft + labelW + gapA + nudgeW + gapB + trackW * 0.5;
     const plusX = innerLeft + labelW + gapA + nudgeW + gapB + trackW + gapC + nudgeW * 0.5;
     const valueX = innerLeft + labelW + gapA + nudgeW + gapB + trackW + gapC + nudgeW + gapD + valueW * 0.5;
+    let rowCursor = 0;
+
+    if (hasDesignSwitcher) {
+      const y = halfH - 0.155 - rowCursor * rowH;
+      rowCursor += 1;
+      const activeDesignId = getActiveDesignIdSafe();
+      const label = makeVrTextPlane('Design', labelW, 0.07, {
+        color: VR_MENU_TEXT_DARK_COLOR,
+        fontPx: 50,
+        fontWeight: '700',
+        align: 'left',
+        padding: 18,
+      });
+      label.position.set(leftLabelX, y, 0.004);
+      group.add(label);
+
+      const switchAreaLeft = innerLeft + labelW + gapA;
+      const switchAreaWidth = innerWidth - labelW - gapA;
+      const btnGap = 0.014;
+      const btnCount = designDefs.length;
+      const btnW = Math.max(0.10, (switchAreaWidth - (btnGap * (btnCount - 1))) / btnCount);
+      const btnH = 0.058;
+      designDefs.forEach((def, idx) => {
+        const designId = String(def.id);
+        const labelText = String(def.label || designId)
+          .replace(/\s*\(.+?\)\s*$/, '')
+          .trim()
+          .replace(/^Current\s+/i, '');
+        const x = switchAreaLeft + (btnW * 0.5) + idx * (btnW + btnGap);
+        const color = designId === activeDesignId ? 0x8ca974 : VR_MENU_NUDGE_COLOR;
+        const btn = makeVrMenuButton(labelText || designId, btnW, btnH, color);
+        btn.position.set(x, y, 0.003);
+        btn.userData.vrMenuAction = {type: 'setDesign', designId};
+        group.add(btn);
+        interactive.push(btn);
+      });
+    }
+
     keys.forEach((key, idx) => {
       const def = VR_MENU_SLIDERS[key];
       if (!def) return;
       const v = quantizeVrSliderValue(def, getVrMenuCurrentValue(key, def));
-      const y = halfH - 0.155 - idx * rowH;
+      const y = halfH - 0.155 - (idx + rowCursor) * rowH;
 
       const label = makeVrTextPlane(def.label, labelW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
@@ -830,7 +1298,7 @@ function buildVrQuickMenu(target) {
       interactive.push(plusBtn);
     });
     if (hasHeightRecalc) {
-      const y = halfH - 0.155 - keys.length * rowH;
+      const y = halfH - 0.155 - (keys.length + rowCursor) * rowH;
       const autoBtn = makeVrMenuButton('Auto Height', 0.30, 0.07, 0xbac2ca);
       autoBtn.position.set(0, y, 0.003);
       autoBtn.userData.vrMenuAction = {type: 'recalcHeight'};
@@ -1023,6 +1491,9 @@ function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=f
   if (action.type === 'close') {
     clearVrQuickMenu();
     return true;
+  }
+  if (action.type === 'setDesign' && action.designId) {
+    return switchDesignAndReload(action.designId);
   }
   if (action.type === 'sliderNudge' && action.key) {
     const def = VR_MENU_SLIDERS[action.key];
@@ -2057,7 +2528,9 @@ function setRigOpenValue(deg, doRebuild=false) {
   ) {
     drawHoverSectionDimensions(activeHoverMesh, activeHoverMesh.userData.sectionInfo);
   }
-  if (doRebuild && !didFastApply && trainingRigEnabled) requestRebuild();
+  if (doRebuild && !didFastApply && trainingRigEnabled) {
+    requestRebuild({stages: [UI_REBUILD_STAGE.GEOMETRY]});
+  }
   return clamped;
 }
 
@@ -2491,16 +2964,34 @@ if (reactivateCameraBtn) {
 
 wrap.addEventListener('mousedown', e => {
   hideHoverInfo();
+  if (handleMeasureMouseDown(e)) {
+    isDragging = false;
+    dragMode = 'orbit';
+    lastX = e.clientX;
+    lastY = e.clientY;
+    return;
+  }
   isDragging = true;
   dragMode = (e.button === 2 || e.button === 1 || e.shiftKey) ? 'pan' : 'orbit';
   lastX = e.clientX; lastY = e.clientY;
 });
-wrap.addEventListener('contextmenu', e => e.preventDefault());
-window.addEventListener('mouseup', () => {
+wrap.addEventListener('contextmenu', e => {
+  if (cancelActiveMeasurement()) {
+    e.preventDefault();
+    return;
+  }
+  e.preventDefault();
+});
+window.addEventListener('mouseup', e => {
+  handleMeasureMouseUp(e);
   isDragging = false;
   dragMode = 'orbit';
 });
 window.addEventListener('mousemove', e => {
+  if (measureTool.settings.enabled && measureTool.dragging) {
+    updateMeasurePointerMove(e.clientX, e.clientY);
+    return;
+  }
   if (!isDragging) return;
   const dx = e.clientX - lastX, dy = e.clientY - lastY;
   lastX = e.clientX; lastY = e.clientY;
@@ -2511,7 +3002,10 @@ window.addEventListener('mousemove', e => {
     phi = Math.max(ORBIT_MIN_POLAR, Math.min(ORBIT_MAX_POLAR, phi - dy * 0.005));
   }
 });
-wrap.addEventListener('mousemove', e => updateHover(e.clientX, e.clientY));
+wrap.addEventListener('mousemove', e => {
+  if (updateMeasurePointerMove(e.clientX, e.clientY)) return;
+  updateHover(e.clientX, e.clientY);
+});
 wrap.addEventListener('mouseleave', hideHoverInfo);
 wrap.addEventListener('wheel', e => {
   radius = Math.max(3, Math.min(25, radius + e.deltaY * 0.01));
@@ -2592,6 +3086,10 @@ wrap.addEventListener('touchmove', e => {
 }, { passive: false });
 
 window.addEventListener('keydown', e => {
+  if (e.code === 'Escape' && cancelActiveMeasurement()) {
+    e.preventDefault();
+    return;
+  }
   setDesktopMoveKeyState(e, true);
 });
 window.addEventListener('keyup', e => {
@@ -2600,14 +3098,11 @@ window.addEventListener('keyup', e => {
 window.addEventListener('blur', clearDesktopMoveKeys);
 
 // ── Slider wiring ──
-const UI_DESIGN_SYSTEM = (
-  typeof window !== 'undefined' &&
-  window.ClimbingWallDesignSystem
-) ? window.ClimbingWallDesignSystem : null;
+const UI_DESIGN_SYSTEM = RUNTIME_DESIGN_SYSTEM;
 const UI_ACTIVE_DESIGN_DEF = (
   UI_DESIGN_SYSTEM &&
   typeof UI_DESIGN_SYSTEM.getDesignDefinition === 'function'
-) ? UI_DESIGN_SYSTEM.getDesignDefinition() : null;
+) ? UI_DESIGN_SYSTEM.getDesignDefinition(getActiveDesignIdSafe()) : null;
 const FALLBACK_GEOMETRY_SLIDER_SCHEMA = Object.freeze([
   {id: 'roomWidth', stateKey: 'width', labelId: 'roomWidthLabel', fmt: 'm2'},
   {id: 'roomDepth', stateKey: 'depth', labelId: 'roomDepthLabel', fmt: 'm2'},
@@ -2760,7 +3255,7 @@ function bindSlider(id, labelId, stateKey, fmt, triggerRebuild) {
     if (lbl) lbl.textContent = fmt(v);
     if (triggerRebuild) {
       if (stateKey === 'eAngle' && typeof setAdjAngle === 'function') setAdjAngle(v);
-      requestRebuild();
+      requestRebuild({stages: [UI_REBUILD_STAGE.GEOMETRY]});
     }
     else {
       setAdjAngle(wallState.eAngle);
@@ -2806,6 +3301,46 @@ PANEL_GEOMETRY_SLIDER_SCHEMA.forEach(def => {
 syncSlidersFromState();
 syncGeometrySlidersFromState();
 
+function initDesignSelector() {
+  const select = document.getElementById('designSelect');
+  if (!select) return;
+  const defs = getAvailableDesignDefs();
+  const activeId = getActiveDesignIdSafe();
+  select.innerHTML = '';
+  defs.forEach(def => {
+    const id = String(def?.id || '').trim();
+    if (!id) return;
+    const opt = document.createElement('option');
+    opt.value = id;
+    const label = String(def?.label || id);
+    const status = String(def?.status || '').trim();
+    opt.textContent = status && status !== 'active' ? `${label} (${status})` : label;
+    if (id === activeId) opt.selected = true;
+    select.appendChild(opt);
+  });
+  if (!select.options.length) {
+    const fallback = document.createElement('option');
+    fallback.value = activeId;
+    fallback.textContent = activeId;
+    fallback.selected = true;
+    select.appendChild(fallback);
+  }
+  select.value = activeId;
+  select.addEventListener('change', () => {
+    const next = String(select.value || '').trim();
+    if (!next || next === activeId) return;
+    const ok = switchDesignAndReload(next);
+    if (!ok) {
+      select.value = activeId;
+      showSaveStatus('Design switch failed', true);
+      return;
+    }
+    showSaveStatus('Switching design...');
+  });
+}
+
+initDesignSelector();
+
 const wallControlsDetails = document.getElementById('wallControlsDetails');
 if (wallControlsDetails && window.matchMedia && window.matchMedia('(max-width: 980px)').matches) {
   wallControlsDetails.removeAttribute('open');
@@ -2838,7 +3373,7 @@ if (resetConfigBtn) {
       targetY = savedCam.targetY;
       targetZ = savedCam.targetZ;
     }
-    rebuild();
+    requestRebuild({immediate: true, stages: [UI_REBUILD_STAGE.GEOMETRY]});
     showSaveStatus('Reset to saved defaults');
   });
 }
@@ -2914,6 +3449,58 @@ if (climbingHoldsToggle) {
     setClimbingHoldsEnabled(climbingHoldsToggle.checked);
   });
 }
+
+const measureToolToggle = document.getElementById('measureToolToggle');
+const measureSnapSurfaceToggle = document.getElementById('measureSnapSurfaceToggle');
+const measureSnapEdgeToggle = document.getElementById('measureSnapEdgeToggle');
+const measureSnapPointToggle = document.getElementById('measureSnapPointToggle');
+const measureClearBtn = document.getElementById('measureClearBtn');
+
+function syncMeasureToggleUi() {
+  if (measureToolToggle) measureToolToggle.checked = !!measureTool.settings.enabled;
+  if (measureSnapSurfaceToggle) measureSnapSurfaceToggle.checked = !!measureTool.settings.snapToSurfaces;
+  if (measureSnapEdgeToggle) measureSnapEdgeToggle.checked = !!measureTool.settings.snapToEdges;
+  if (measureSnapPointToggle) measureSnapPointToggle.checked = !!measureTool.settings.snapToVertices;
+}
+
+function updateMeasurementSetting(key, value) {
+  if (!Object.prototype.hasOwnProperty.call(measureTool.settings, key)) return;
+  measureTool.settings[key] = value;
+  saveMeasurementSettings(measureTool.settings);
+  if (!measureTool.settings.enabled) cancelActiveMeasurement();
+  syncMeasureToggleUi();
+  renderMeasureOverlay();
+  syncMeasurementToAppState(`ui:measure:${key}`);
+}
+
+if (measureToolToggle) {
+  measureToolToggle.addEventListener('change', () => {
+    updateMeasurementSetting('enabled', !!measureToolToggle.checked);
+  });
+}
+if (measureSnapSurfaceToggle) {
+  measureSnapSurfaceToggle.addEventListener('change', () => {
+    updateMeasurementSetting('snapToSurfaces', !!measureSnapSurfaceToggle.checked);
+  });
+}
+if (measureSnapEdgeToggle) {
+  measureSnapEdgeToggle.addEventListener('change', () => {
+    updateMeasurementSetting('snapToEdges', !!measureSnapEdgeToggle.checked);
+  });
+}
+if (measureSnapPointToggle) {
+  measureSnapPointToggle.addEventListener('change', () => {
+    updateMeasurementSetting('snapToVertices', !!measureSnapPointToggle.checked);
+  });
+}
+if (measureClearBtn) {
+  measureClearBtn.addEventListener('click', () => {
+    clearMeasurements({segments: true, active: true});
+  });
+}
+syncMeasureToggleUi();
+renderMeasureOverlay();
+syncMeasurementToAppState('ui:measure:init');
 
 // Resize
 function resize() {

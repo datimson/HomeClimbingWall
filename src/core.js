@@ -432,6 +432,25 @@ function syncWallGeometryAnchors() {
   }
 }
 
+const CORE_REBUILD_STAGE = Object.freeze({
+  GEOMETRY: 'geometry',
+  ANNOTATIONS: 'annotations',
+  CRASH_MATS: 'crashMats',
+});
+
+function requestCoreRebuild(stages=null) {
+  if (typeof invalidateRebuildStages === 'function') {
+    if (Array.isArray(stages) && stages.length) invalidateRebuildStages(stages);
+    else invalidateRebuildStages();
+  }
+  if (typeof rebuild !== 'function') return;
+  if (typeof invalidateRebuildStages === 'function') {
+    rebuild({useDirty: true});
+  } else {
+    rebuild();
+  }
+}
+
 function applyWallGeometryState(nextState, {rebuildScene=true, persistState=true, persistDefaults=false}={}) {
   const normalized = normalizeWallGeometryState(defaultWallGeometryState, nextState);
   wallGeometryState = {...normalized};
@@ -458,7 +477,7 @@ function applyWallGeometryState(nextState, {rebuildScene=true, persistState=true
 
   if (typeof rebuildFloorSlab === 'function') rebuildFloorSlab();
   if (typeof updateEnvironmentAnchors === 'function') updateEnvironmentAnchors();
-  if (rebuildScene && typeof rebuild === 'function') rebuild();
+  if (rebuildScene) requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('geometry:update');
   return wallGeometryState;
 }
@@ -699,35 +718,35 @@ function setCrashMatTextureEnabled(enabled) {
 function setPolyRoofEnabled(enabled) {
   polyRoofEnabled = !!enabled;
   persistStoredBool(POLY_ROOF_STORAGE_KEY, polyRoofEnabled);
-  if (typeof rebuild === 'function') rebuild();
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:polyRoof');
 }
 
 function setTrainingRigEnabled(enabled) {
   trainingRigEnabled = !!enabled;
   persistStoredBool(TRAINING_RIG_STORAGE_KEY, trainingRigEnabled);
-  if (typeof rebuild === 'function') rebuild();
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:trainingRig');
 }
 
 function setTrainingCabinetEnabled(enabled) {
   trainingCabinetEnabled = !!enabled;
   persistStoredBool(TRAINING_CABINET_STORAGE_KEY, trainingCabinetEnabled);
-  if (typeof rebuild === 'function') rebuild();
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:trainingCabinet');
 }
 
 function setCampusBoardEnabled(enabled) {
   campusBoardEnabled = !!enabled;
   persistStoredBool(CAMPUS_BOARD_STORAGE_KEY, campusBoardEnabled);
-  if (typeof rebuild === 'function') rebuild();
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:campusBoard');
 }
 
 function setConceptVolumesEnabled(enabled) {
   conceptVolumesEnabled = !!enabled;
   persistStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, conceptVolumesEnabled);
-  if (typeof rebuild === 'function') rebuild();
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:conceptVolumes');
 }
 
@@ -757,7 +776,7 @@ function setTexturesEnabled(enabled) {
 function setClimbingHoldsEnabled(enabled) {
   climbingHoldsEnabled = !!enabled;
   persistStoredBool(CLIMBING_HOLDS_STORAGE_KEY, climbingHoldsEnabled);
-  if (typeof rebuild === 'function') rebuild();
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:climbingHolds');
 }
 
@@ -1801,7 +1820,7 @@ function applyCoreSnapshotToLegacy(nextState, options={}) {
   if (nextState.camera && typeof saveCameraState === 'function') {
     saveCameraState(nextState.camera);
   }
-  if (needsRebuild && rebuildScene && typeof rebuild === 'function') rebuild();
+  if (needsRebuild && rebuildScene) requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   return true;
 }
 

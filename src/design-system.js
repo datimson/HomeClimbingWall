@@ -77,6 +77,32 @@
     rigOpen: [0, 180],
   });
 
+  const VARIANT_B_GEOMETRY_DEFAULTS = Object.freeze({
+    width: 4.8,
+    depth: 3.6,
+    fixedHeight: 3.6,
+    adjustableHeight: 4.1,
+  });
+
+  const VARIANT_B_WALL_DEFAULTS = Object.freeze({
+    aAngle: 18,
+    aWidth: 1.10,
+    bAngle: 18,
+    bWidth: 1.10,
+    cAngle: 14,
+    cWidth: 1.25,
+    dAngle: 20,
+    d1Height: 2.10,
+    d2Angle: 18,
+    eAngle: 14,
+    f1Angle: 18,
+    f1Height: 2.30,
+    f1Width: 1.20,
+    f2Angle: 36,
+    f2WidthTop: 1.55,
+    rigOpen: 0,
+  });
+
   const CLASSIC_PANEL_SCHEMA = Object.freeze({
     geometry: Object.freeze([
       {id: 'roomWidth', stateKey: 'width', labelId: 'roomWidthLabel', fmt: 'm2'},
@@ -145,11 +171,11 @@
     [DESIGN_IDS.VARIANT_B]: Object.freeze({
       id: DESIGN_IDS.VARIANT_B,
       label: 'Alternative Wall (B)',
-      status: 'planned',
+      status: 'prototype',
       textureNamespace: 'variantB',
-      geometryDefaults: CLASSIC_GEOMETRY_DEFAULTS,
+      geometryDefaults: VARIANT_B_GEOMETRY_DEFAULTS,
       geometryLimits: CLASSIC_GEOMETRY_LIMITS,
-      wallStateDefaults: CLASSIC_WALL_DEFAULTS,
+      wallStateDefaults: VARIANT_B_WALL_DEFAULTS,
       wallStateLimits: CLASSIC_WALL_LIMITS,
       panelSchema: CLASSIC_PANEL_SCHEMA,
     }),
@@ -212,18 +238,22 @@
       geometryState: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.geometryState),
       geometryDefaults: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.geometryDefaults),
       cameraState: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.cameraState),
-      crashMats: LEGACY_STORAGE_KEYS.crashMats,
-      polyRoof: LEGACY_STORAGE_KEYS.polyRoof,
-      trainingRig: LEGACY_STORAGE_KEYS.trainingRig,
-      trainingCabinet: LEGACY_STORAGE_KEYS.trainingCabinet,
-      campusBoard: LEGACY_STORAGE_KEYS.campusBoard,
-      conceptVolumes: LEGACY_STORAGE_KEYS.conceptVolumes,
-      wallTextures: LEGACY_STORAGE_KEYS.wallTextures,
-      climbingHolds: LEGACY_STORAGE_KEYS.climbingHolds,
-      crashMatTexture: LEGACY_STORAGE_KEYS.crashMatTexture,
-      textures: LEGACY_STORAGE_KEYS.textures,
+      crashMats: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.crashMats),
+      polyRoof: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.polyRoof),
+      trainingRig: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.trainingRig),
+      trainingCabinet: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.trainingCabinet),
+      campusBoard: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.campusBoard),
+      conceptVolumes: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.conceptVolumes),
+      wallTextures: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.wallTextures),
+      climbingHolds: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.climbingHolds),
+      crashMatTexture: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.crashMatTexture),
+      textures: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.textures),
       environment: LEGACY_STORAGE_KEYS.environment,
     };
+  }
+
+  function getMeasurementStorageKey(designId=getActiveDesignId()) {
+    return buildScopedStorageKey(designId, MEASUREMENT_TOOL_PLAN.storageKey);
   }
 
   function dedupePaths(paths) {
@@ -268,6 +298,7 @@
     getDesignDefinition,
     listDesigns,
     getStorageKeysForDesign,
+    getMeasurementStorageKey,
     getTextureConfigForDesign,
   });
 })(window);

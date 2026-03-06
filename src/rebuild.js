@@ -240,10 +240,94 @@ if (typeof window !== 'undefined') {
   window.invalidateRebuildStages = invalidateRebuildStages;
 }
 
+const ACTIVE_WALL_DESIGN_ID = (
+  typeof ACTIVE_DESIGN_ID === 'string' && ACTIVE_DESIGN_ID
+) ? ACTIVE_DESIGN_ID : 'classic';
+
+const REBUILD_PROFILE = {
+  last: null,
+  history: [],
+  maxHistory: 40,
+};
+
+function pushRebuildProfileSample(sample) {
+  REBUILD_PROFILE.last = sample;
+  REBUILD_PROFILE.history.push(sample);
+  if (REBUILD_PROFILE.history.length > REBUILD_PROFILE.maxHistory) {
+    REBUILD_PROFILE.history.shift();
+  }
+  if (
+    typeof window !== 'undefined' &&
+    window &&
+    typeof window === 'object' &&
+    window.CW_DEBUG_REBUILD === true
+  ) {
+    // eslint-disable-next-line no-console
+    console.log(`[rebuild] ${sample.totalMs.toFixed(2)}ms (${(sample.stages || []).join(', ')})`, sample);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.REBUILD_PROFILE = REBUILD_PROFILE;
+}
+
+function buildClassicDesignGeometry(context) {
+  const {
+    group,
+    s,
+    dWidth,
+    fixedSideLen,
+    dRoofZ,
+    fRoofZ,
+    adjLen,
+  } = context;
+  buildBackSection(group, s.bWidth, s.bAngle, s.bWidth/2,                       fixedSideLen, 'B');
+  buildBackSection(group, s.cWidth, s.cAngle, s.bWidth + s.cWidth/2,            fixedSideLen, 'C');
+  buildBackSectionTwoStage(group, dWidth, s.dAngle, s.d2Angle, s.bWidth + s.cWidth + dWidth/2, s.d1Height, 'D');
+  buildSideSection(group, fixedSideLen, s.aAngle, fixedSideLen, 'A');
+  buildFWall(group, s.f1Width, s.f1Angle, s.f2Angle, s.f2WidthTop, s.f1Height);
+  buildRearABCornerShellCap(group);
+  buildTrainingRig(group, s);
+  buildCampusBoardOnD(group, s);
+  buildConceptVolumes(group, s);
+
+  // Apply collision clipping.
+  applyClipping(s);
+
+  // Roof, panel and holds.
+  buildLRoof(group, fixedSideLen, dWidth, s.f2WidthTop, dRoofZ, fRoofZ);
+  buildESupportPost(group, fixedSideLen);
+  buildPolyRoofExtension(group, fixedSideLen, s.f2WidthTop);
+  buildCeilingPanelHolds(group);
+  buildAdjPanel(group, adjLen, fixedSideLen);
+  buildClimbingHolds(group, s);
+  buildABCornerGuide(group, s, fixedSideLen);
+}
+
+function buildVariantBDesignGeometry(context) {
+  // Initial builder path for design B.
+  buildClassicDesignGeometry(context);
+}
+
+function buildGeometryForActiveDesign(context) {
+  if (ACTIVE_WALL_DESIGN_ID === 'variantB') {
+    buildVariantBDesignGeometry(context);
+    return;
+  }
+  buildClassicDesignGeometry(context);
+}
+
 // ── Main rebuild ──
 function rebuild(options={}) {
   const plan = resolveRebuildPlan(options);
   if (!plan.geometry && !plan.annotations && !plan.crashMats) return;
+  const perfNow = (
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+  ) ? () => performance.now() : () => Date.now();
+  const rebuildStart = perfNow();
+  let geometryMs = 0;
+  let annotationMs = 0;
+  let crashMatsMs = 0;
 
   if (plan.geometry) {
     while(wallGroup.children.length) wallGroup.remove(wallGroup.children[0]);
@@ -263,7 +347,20 @@ function rebuild(options={}) {
   }
 
   if (!plan.geometry && !plan.annotations) {
-    if (plan.crashMats) rebuildCrashMatsGeometry();
+    if (plan.crashMats) {
+      const crashStart = perfNow();
+      rebuildCrashMatsGeometry();
+      crashMatsMs = perfNow() - crashStart;
+    }
+    pushRebuildProfileSample({
+      designId: ACTIVE_WALL_DESIGN_ID,
+      stages: plan.stages.slice(),
+      geometryMs,
+      annotationMs,
+      crashMatsMs,
+      totalMs: perfNow() - rebuildStart,
+      ts: Date.now(),
+    });
     return;
   }
 
@@ -313,33 +410,21 @@ function rebuild(options={}) {
   );
 
   if (plan.geometry) {
-    // ── Fixed walls ──
-    buildBackSection(wallGroup, s.bWidth, s.bAngle, s.bWidth/2,                       fixedSideLen, 'B');
-    buildBackSection(wallGroup, s.cWidth, s.cAngle, s.bWidth + s.cWidth/2,            fixedSideLen, 'C');
-    buildBackSectionTwoStage(wallGroup, dWidth, s.dAngle, s.d2Angle, s.bWidth + s.cWidth + dWidth/2, s.d1Height, 'D');
-    buildSideSection(wallGroup, fixedSideLen, s.aAngle, fixedSideLen, 'A');
-    buildFWall(wallGroup, s.f1Width, s.f1Angle, s.f2Angle, s.f2WidthTop, s.f1Height);
-    buildRearABCornerShellCap(wallGroup);
-    buildTrainingRig(wallGroup, s);
-    buildCampusBoardOnD(wallGroup, s);
-    buildConceptVolumes(wallGroup, s);
-
-    // Apply collision clipping
-    applyClipping(s);
-
-    // ── L-shaped roof cap ──
-    buildLRoof(wallGroup, fixedSideLen, dWidth, s.f2WidthTop, dRoofZ, fRoofZ);
-    buildESupportPost(wallGroup, fixedSideLen);
-    buildPolyRoofExtension(wallGroup, fixedSideLen, s.f2WidthTop);
-    buildCeilingPanelHolds(wallGroup);
-
-    // ── Adjustable panel ──
-    buildAdjPanel(wallGroup, adjLen, fixedSideLen);
-    buildClimbingHolds(wallGroup, s);
-    buildABCornerGuide(wallGroup, s, fixedSideLen);
+    const geometryStart = perfNow();
+    buildGeometryForActiveDesign({
+      group: wallGroup,
+      s,
+      dWidth,
+      fixedSideLen,
+      dRoofZ,
+      fRoofZ,
+      adjLen,
+    });
+    geometryMs = perfNow() - geometryStart;
   }
 
   if (plan.annotations) {
+  const annotationStart = perfNow();
   // ── Labels ──
   function findWallLabelMesh(wallId) {
     const matches = hoverTargets.filter(m => m.userData?.sectionInfo?.wall === wallId);
@@ -623,9 +708,24 @@ function rebuild(options={}) {
   arcText.scale.set(0.50, 0.125, 1);
   arcText.position.copy(eArcPt((arcMin + arcMax) / 2)).add(new THREE.Vector3(0.28, 0.18, 0));
   dimGroup.add(arcText);
+  annotationMs = perfNow() - annotationStart;
   }
 
-  if (plan.crashMats) rebuildCrashMatsGeometry();
+  if (plan.crashMats) {
+    const crashStart = perfNow();
+    rebuildCrashMatsGeometry();
+    crashMatsMs = perfNow() - crashStart;
+  }
+
+  pushRebuildProfileSample({
+    designId: ACTIVE_WALL_DESIGN_ID,
+    stages: plan.stages.slice(),
+    geometryMs,
+    annotationMs,
+    crashMatsMs,
+    totalMs: perfNow() - rebuildStart,
+    ts: Date.now(),
+  });
 }
 
 // Initial build

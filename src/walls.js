@@ -701,6 +701,7 @@ function buildClimbingHolds(group) {
       const holdStyle = pickHoldStyle((holdSeed ^ holdHashString(info.wall)) >>> 0, footholdBias);
       const holdGeo = makeHoldGeometry(radius, depth, holdSeed, holdStyle);
       const hold = new THREE.Mesh(holdGeo, getHoldMaterial(holdSeed));
+      hold.userData.isHold = true;
       const backZ = holdGeo.boundingBox ? holdGeo.boundingBox.min.z : (-depth * 0.45);
       const mountOffset = Math.max(0.0015, (-backZ * 0.14) + 0.0010);
       samplePoint.copy(frame.origin)
@@ -831,6 +832,7 @@ function addHoldsToVolumeMesh(group, mesh, seedLabel, count, normalFilter=null) 
     const holdStyle = pickHoldStyle((holdSeed ^ holdHashString(seedLabel)) >>> 0, false);
     const holdGeo = makeHoldGeometry(radius, depth, holdSeed, holdStyle);
     const hold = new THREE.Mesh(holdGeo, getHoldMaterial(holdSeed + 13));
+    hold.userData.isHold = true;
     const backZ = holdGeo.boundingBox ? holdGeo.boundingBox.min.z : (-depth * 0.45);
     const mountOffset = Math.max(0.0015, -backZ - 0.0015);
     hold.quaternion.setFromUnitVectors(zAxis, face.normal);

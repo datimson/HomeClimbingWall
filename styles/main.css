@@ -255,6 +255,37 @@
 
   .wall-letter { color: #c8d88a; }
 
+  .design-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .design-label {
+    font-size: 0.75rem;
+    color: #777;
+    min-width: 92px;
+  }
+
+  .design-select {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    background: #272727;
+    color: #ddd4c8;
+    padding: 6px 8px;
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
+  }
+
+  .design-select:focus {
+    outline: none;
+    border-color: #5b83ad;
+    box-shadow: 0 0 0 1px rgba(91,131,173,0.35);
+  }
+
   .leg-swatch--a { background: #4a6741; }
   .leg-swatch--b { background: #4a6741; }
   .leg-swatch--c { background: #4a6741; }
@@ -329,6 +360,9 @@
     .toggle-row { padding: 10px; }
     .toggle-meta { display: none; }
     .toggle-label { font-size: 0.72rem; }
+    .design-row { gap: 8px; }
+    .design-label { min-width: 86px; font-size: 0.72rem; }
+    .design-select { font-size: 0.71rem; padding: 6px 7px; }
 
     .angle-row { gap: 8px; }
     .angle-row label { width: 106px; font-size: 0.71rem; }
