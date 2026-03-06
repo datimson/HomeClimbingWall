@@ -980,10 +980,10 @@ function getHoldMaterials() {
   if (!holdBumpTexture) holdBumpTexture = makeHoldBumpTexture();
   holdMaterials = HOLD_COLORS.map((hex, idx) => new THREE.MeshStandardMaterial({
     color: hex,
-    roughness: 0.90,
-    metalness: 0.03,
+    roughness: 0.74,
+    metalness: 0.02,
     bumpMap: holdBumpTexture,
-    bumpScale: 0.012 + (idx % 3) * 0.0035,
+    bumpScale: 0.020 + (idx % 3) * 0.0055,
   }));
   return holdMaterials;
 }

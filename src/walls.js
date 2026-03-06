@@ -334,6 +334,7 @@ function registerSectionHover(mesh, info) {
 
 const HOLDABLE_WALL_IDS = new Set(['A', 'B', 'C', 'D', 'E', 'F']);
 const HOLD_DENSITY_SCALE = 1.2;
+const HOLD_STYLE_IDS = Object.freeze(['jug', 'sloper', 'crimp', 'pinch', 'pocket', 'edge']);
 
 function holdHashString(str) {
   let h = 2166136261;
@@ -352,6 +353,23 @@ function holdSeededRandom(seed) {
     v ^= v + Math.imul(v ^ (v >>> 7), v | 61);
     return ((v ^ (v >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+function pickHoldStyle(seed, footholdBias=false) {
+  const rand = holdSeededRandom((seed ^ 0x9e3779b9) >>> 0);
+  const t = rand();
+  if (footholdBias) {
+    if (t < 0.36) return 'edge';
+    if (t < 0.70) return 'crimp';
+    if (t < 0.88) return 'pinch';
+    return 'sloper';
+  }
+  if (t < 0.22) return 'jug';
+  if (t < 0.42) return 'sloper';
+  if (t < 0.62) return 'crimp';
+  if (t < 0.80) return 'pinch';
+  if (t < 0.92) return 'pocket';
+  return 'edge';
 }
 
 function getSectionFrame(mesh, info) {
@@ -480,23 +498,106 @@ function getSectionFrame(mesh, info) {
   return { origin, widthDir, upDir, normal, minU, maxU, minV, maxV, width, height };
 }
 
-function makeHoldGeometry(radius, depth, seed) {
-  const geo = new THREE.IcosahedronGeometry(radius, 1);
-  const rand = holdSeededRandom(seed);
+function makeHoldGeometry(radius, depth, seed, style='sloper') {
+  const baseR = Math.max(0.012, Number(radius) || 0.03);
+  const targetDepth = Math.max(baseR * 0.70, Number(depth) || (baseR * 1.05));
+  const holdStyle = HOLD_STYLE_IDS.includes(style) ? style : pickHoldStyle(seed, false);
+  const geo = new THREE.IcosahedronGeometry(baseR, 2);
   const pos = geo.attributes.position;
   const p = new THREE.Vector3();
-  const backLimit = -Math.max(radius * 0.62, depth * 0.46);
+  const backPlane = -Math.max(baseR * 0.40, targetDepth * 0.45);
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+
   for (let i = 0; i < pos.count; i++) {
     p.fromBufferAttribute(pos, i);
-    p.multiplyScalar(0.84 + rand() * 0.42);
-    p.x += (rand() - 0.5) * radius * 0.26;
-    p.y += (rand() - 0.5) * radius * 0.24;
-    p.z += (rand() - 0.5) * radius * 0.34;
-    if (p.z < backLimit) p.z = backLimit;
+    let x = p.x / baseR;
+    let y = p.y / baseR;
+    let z = p.z / baseR;
+
+    switch (holdStyle) {
+      case 'jug': {
+        z *= 1.22;
+        x *= 1.08;
+        y *= 1.02;
+        const lip = THREE.MathUtils.clamp((y + 0.35) * 1.2, 0, 1);
+        z += 0.22 * lip;
+        const scoop = Math.max(0, 1 - ((x * x * 1.25) + (Math.pow(y - 0.06, 2) * 2.8)));
+        z -= 0.18 * scoop;
+        break;
+      }
+      case 'crimp': {
+        z *= 0.72;
+        x *= 1.18;
+        y *= 0.70;
+        const lip = Math.max(0, 1 - Math.abs(y + 0.08) * 2.3);
+        z += 0.11 * lip;
+        break;
+      }
+      case 'pinch': {
+        x *= 0.72;
+        y *= 1.24;
+        z *= 0.95;
+        const ridge = Math.max(0, 1 - Math.abs(x) * 2.2);
+        z += 0.14 * ridge;
+        break;
+      }
+      case 'pocket': {
+        z *= 1.00;
+        x *= 0.98;
+        y *= 0.98;
+        const r2 = (x * x) + (y * y);
+        const bowl = Math.max(0, 1 - r2 * 2.9);
+        z -= 0.28 * bowl;
+        if (r2 < 0.045) z -= 0.09;
+        break;
+      }
+      case 'edge': {
+        z *= 0.55;
+        x *= 1.12;
+        y *= 0.62;
+        const lip = Math.max(0, 1 - Math.abs(y + 0.16) * 2.6);
+        z += 0.09 * lip;
+        break;
+      }
+      case 'sloper':
+      default: {
+        z *= 1.05;
+        x *= 1.07;
+        y *= 1.05;
+        const dome = Math.max(0, 1 - ((x * x + y * y) * 1.35));
+        z += 0.10 * dome;
+        break;
+      }
+    }
+
+    const n1 = Math.sin((x * 10.7) + (y * 7.3) + (z * 5.9) + (seed * 0.013));
+    const n2 = Math.sin((x * 21.3) - (y * 15.1) + (z * 13.7) + (seed * 0.0043));
+    const roughAmp = (holdStyle === 'sloper') ? 0.035 : (holdStyle === 'edge' ? 0.022 : 0.056);
+    const rough = ((n1 * 0.6) + (n2 * 0.4)) * roughAmp;
+    const scale = 1 + rough;
+    p.set(x * baseR * scale, y * baseR * scale, z * baseR * scale);
+
+    if (p.z < backPlane) p.z = backPlane + (p.z - backPlane) * 0.08;
+    minZ = Math.min(minZ, p.z);
+    maxZ = Math.max(maxZ, p.z);
     pos.setXYZ(i, p.x, p.y, p.z);
   }
+
+  const currentDepth = Math.max(0.001, maxZ - minZ);
+  const depthScale = THREE.MathUtils.clamp(targetDepth / currentDepth, 0.65, 1.45);
+  const shiftToBack = backPlane - minZ;
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    const shifted = p.z + shiftToBack;
+    p.z = backPlane + (shifted - backPlane) * depthScale;
+    if (p.z < backPlane) p.z = backPlane;
+    pos.setXYZ(i, p.x, p.y, p.z);
+  }
+
   pos.needsUpdate = true;
   geo.computeVertexNormals();
+  geo.computeBoundingBox();
   return geo;
 }
 
@@ -552,17 +653,21 @@ function buildClimbingHolds(group) {
     for (let i = 0; i < count; i++) {
       const u = THREE.MathUtils.lerp(usableU0, usableU1, rand());
       const v = THREE.MathUtils.lerp(usableV0, usableV1, rand());
+      const vNorm = THREE.MathUtils.clamp((v - usableV0) / Math.max(1e-6, usableV1 - usableV0), 0, 1);
+      const footholdBias = info.section === 'Kick' || vNorm < 0.24;
       const radius = 0.028 + rand() * 0.032;
       const depth = radius * (0.95 + rand() * 0.70);
       const holdSeed = (seedBase ^ (i * 2654435761)) >>> 0;
-      const holdGeo = makeHoldGeometry(radius, depth, holdSeed);
+      const holdStyle = pickHoldStyle((holdSeed ^ holdHashString(info.wall)) >>> 0, footholdBias);
+      const holdGeo = makeHoldGeometry(radius, depth, holdSeed, holdStyle);
       const hold = new THREE.Mesh(holdGeo, getHoldMaterial(holdSeed));
+      const frontZ = holdGeo.boundingBox ? holdGeo.boundingBox.max.z : (depth * 0.40);
       hold.quaternion.copy(baseQuat);
       hold.rotateZ(rand() * Math.PI * 2);
       hold.position.copy(frame.origin)
         .addScaledVector(frame.widthDir, u)
         .addScaledVector(frame.upDir, v)
-        .addScaledVector(frame.normal, depth * 0.28 + 0.006);
+        .addScaledVector(frame.normal, frontZ * 0.78 + 0.004);
       hold.castShadow = true;
       hold.receiveShadow = true;
       group.add(hold);
@@ -658,11 +763,13 @@ function addHoldsToVolumeMesh(group, mesh, seedLabel, count, normalFilter=null) 
     const radius = 0.024 + rand() * 0.026;
     const depth = radius * (0.90 + rand() * 0.65);
     const holdSeed = (seedBase ^ (i * 2654435761)) >>> 0;
-    const holdGeo = makeHoldGeometry(radius, depth, holdSeed);
+    const holdStyle = pickHoldStyle((holdSeed ^ holdHashString(seedLabel)) >>> 0, false);
+    const holdGeo = makeHoldGeometry(radius, depth, holdSeed, holdStyle);
     const hold = new THREE.Mesh(holdGeo, getHoldMaterial(holdSeed + 13));
+    const frontZ = holdGeo.boundingBox ? holdGeo.boundingBox.max.z : (depth * 0.40);
     hold.quaternion.setFromUnitVectors(zAxis, face.normal);
     hold.rotateZ(rand() * Math.PI * 2);
-    hold.position.copy(point).addScaledVector(face.normal, depth * 0.30 + 0.004);
+    hold.position.copy(point).addScaledVector(face.normal, frontZ * 0.82 + 0.003);
     hold.castShadow = true;
     hold.receiveShadow = true;
     group.add(hold);

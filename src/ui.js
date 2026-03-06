@@ -214,7 +214,7 @@ const VR_MENU_FILL_HOVER_COLOR = 0x8f7450;
 const VR_MENU_KNOB_HOVER_COLOR = 0xf0cf98;
 const VR_MENU_CURSOR_COLOR = 0x000000;
 const VR_MENU_CURSOR_RADIUS = 0.003;
-const VR_MENU_CURSOR_OFFSET = 0.018;
+const VR_MENU_CURSOR_OFFSET = 0.008;
 const VR_MENU_GRAB_RADIUS_SPEED = 1.20;
 const VR_MENU_DISTANCE = 0.52;
 const VR_MENU_SIDE_OFFSET = 0.18;
@@ -254,8 +254,7 @@ const vrMenuMoveHeadPos = new THREE.Vector3();
 const vrMenuMoveHoriz = new THREE.Vector3();
 const vrMenuCursorToHead = new THREE.Vector3();
 const vrMenuFaceDir = new THREE.Vector3();
-const vrMenuFaceQuat = new THREE.Quaternion();
-const vrMenuBaseNormal = new THREE.Vector3(0, 0, 1);
+const vrMenuFaceEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const vrMenuCursorOverlayGroup = new THREE.Group();
 vrMenuCursorOverlayGroup.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 950000;
 scene.add(vrMenuCursorOverlayGroup);
@@ -330,7 +329,7 @@ function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
   m.renderOrder = 2100;
   const txt = makeVrTextPlane(label, width * 0.82, height * 0.60, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 64,
+    fontPx: 77,
     fontWeight: '700',
   });
   txt.position.z = 0.004;
@@ -425,8 +424,10 @@ function orientVrMenuTowardWorldPoint(worldPoint) {
   vrMenuFaceDir.copy(worldPoint).sub(vrQuickMenu.group.position);
   if (vrMenuFaceDir.lengthSq() < 1e-10) return;
   vrMenuFaceDir.normalize();
-  vrMenuFaceQuat.setFromUnitVectors(vrMenuBaseNormal, vrMenuFaceDir);
-  vrQuickMenu.group.quaternion.copy(vrMenuFaceQuat);
+  const yaw = Math.atan2(vrMenuFaceDir.x, vrMenuFaceDir.z);
+  const pitch = Math.asin(THREE.MathUtils.clamp(vrMenuFaceDir.y, -1, 1));
+  vrMenuFaceEuler.set(-pitch, yaw, 0, 'YXZ');
+  vrQuickMenu.group.quaternion.setFromEuler(vrMenuFaceEuler);
 }
 
 function quantizeVrSliderValue(def, value) {
@@ -623,7 +624,7 @@ function buildVrQuickMenu(target) {
   const titleWidth = Math.max(0.22, innerWidth - closeW - closeGap);
   const title = makeVrTextPlane(vrMenuTitleForTarget(target), titleWidth, 0.09, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 44,
+    fontPx: 48,
     fontWeight: '700',
     align: 'left',
     padding: 20,
@@ -656,7 +657,7 @@ function buildVrQuickMenu(target) {
 
       const label = makeVrTextPlane(def.label, labelW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 42,
+        fontPx: 50,
         fontWeight: '700',
         align: 'left',
         padding: 18,
@@ -714,7 +715,7 @@ function buildVrQuickMenu(target) {
 
       const valueLabel = makeVrTextPlane(def.fmt(v), valueW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 41,
+        fontPx: 49,
         fontWeight: '700',
         align: 'right',
         padding: 18,
@@ -732,7 +733,7 @@ function buildVrQuickMenu(target) {
   } else {
     const msg = makeVrTextPlane('No adjustable sliders', 0.58, 0.10, {
       color: VR_MENU_TEXT_DARK_COLOR,
-      fontPx: 50,
+      fontPx: 60,
       fontWeight: '700',
     });
     msg.position.set(0, -0.02, 0.004);
