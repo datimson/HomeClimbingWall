@@ -215,7 +215,7 @@ const VR_MENU_BASE_WIDTH = 0.90;
 const VR_MENU_ROW_HEIGHT = 0.095;
 const VR_MENU_PADDING_X = 0.08;
 const VR_MENU_PADDING_Y = 0.05;
-const VR_MENU_RENDER_ORDER_BUMP = 1200;
+const VR_MENU_RENDER_ORDER_BUMP = 100000;
 
 const vrQuickMenu = {
   group: null,
@@ -233,11 +233,13 @@ const vrMenuMove = {
   active: false,
   controllerIndex: -1,
   hitDistance: VR_MENU_DISTANCE,
-  localGrabPoint: new THREE.Vector3(),
-  hasGrabPoint: false,
+  orbitRadius: VR_MENU_DISTANCE,
+  orbitHeightOffset: VR_MENU_DOWN_OFFSET,
+  grabPointY: 0,
 };
 const vrMenuMoveWorldPoint = new THREE.Vector3();
-const vrMenuMoveOffsetWorld = new THREE.Vector3();
+const vrMenuMoveHeadPos = new THREE.Vector3();
+const vrMenuMoveHoriz = new THREE.Vector3();
 
 function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
   const canvas = document.createElement('canvas');
@@ -309,7 +311,7 @@ function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
   m.renderOrder = 2100;
   const txt = makeVrTextPlane(label, width * 0.82, height * 0.60, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 42,
+    fontPx: 50,
     fontWeight: '700',
   });
   txt.position.z = 0.004;
@@ -320,6 +322,7 @@ function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
 function enforceVrMenuOverlay(root) {
   if (!root) return;
   root.traverse(obj => {
+    obj.frustumCulled = false;
     const currentOrder = Number(obj.renderOrder);
     const base = Number.isFinite(currentOrder) ? currentOrder : 0;
     obj.renderOrder = base + VR_MENU_RENDER_ORDER_BUMP;
@@ -327,8 +330,11 @@ function enforceVrMenuOverlay(root) {
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
     mats.forEach(mat => {
       if (!mat) return;
+      mat.transparent = true;
+      if (!Number.isFinite(mat.opacity)) mat.opacity = 1.0;
       mat.depthTest = false;
       mat.depthWrite = false;
+      mat.fog = false;
       mat.needsUpdate = true;
     });
   });
@@ -382,8 +388,9 @@ function clearVrQuickMenu() {
   vrMenuMove.active = false;
   vrMenuMove.controllerIndex = -1;
   vrMenuMove.hitDistance = VR_MENU_DISTANCE;
-  vrMenuMove.hasGrabPoint = false;
-  vrMenuMove.localGrabPoint.set(0, 0, 0);
+  vrMenuMove.orbitRadius = VR_MENU_DISTANCE;
+  vrMenuMove.orbitHeightOffset = VR_MENU_DOWN_OFFSET;
+  vrMenuMove.grabPointY = 0;
   if (!vrQuickMenu.group) {
     vrQuickMenu.interactive = [];
     vrQuickMenu.slidersByKey = {};
@@ -555,7 +562,7 @@ function buildVrQuickMenu(target) {
 
       const label = makeVrTextPlane(def.label, labelW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 28,
+        fontPx: 33,
         fontWeight: '700',
         align: 'left',
         padding: 18,
@@ -613,7 +620,7 @@ function buildVrQuickMenu(target) {
 
       const valueLabel = makeVrTextPlane(def.fmt(v), valueW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 27,
+        fontPx: 32,
         fontWeight: '700',
         align: 'right',
         padding: 18,
@@ -631,7 +638,7 @@ function buildVrQuickMenu(target) {
   } else {
     const msg = makeVrTextPlane('No adjustable sliders', 0.58, 0.10, {
       color: VR_MENU_TEXT_DARK_COLOR,
-      fontPx: 34,
+      fontPx: 40,
       fontWeight: '700',
     });
     msg.position.set(0, -0.02, 0.004);
@@ -699,15 +706,18 @@ function beginVrMenuMove(controllerIndex, hitPoint=null, hitDistance=VR_MENU_DIS
   if (!vrQuickMenu.open || !vrQuickMenu.group) return false;
   if (!Number.isInteger(controllerIndex) || controllerIndex < 0) return false;
   endVrMenuDrag(controllerIndex);
+  const xrCam = renderer.xr.getCamera(camera);
+  if (!xrCam) return false;
+  xrCam.updateMatrixWorld(true);
+  vrMenuMoveHeadPos.setFromMatrixPosition(xrCam.matrixWorld);
+  const dx = vrQuickMenu.group.position.x - vrMenuMoveHeadPos.x;
+  const dz = vrQuickMenu.group.position.z - vrMenuMoveHeadPos.z;
   vrMenuMove.active = true;
   vrMenuMove.controllerIndex = controllerIndex;
   vrMenuMove.hitDistance = THREE.MathUtils.clamp(Number(hitDistance) || VR_MENU_DISTANCE, 0.18, XR_TELEPORT_MAX_DISTANCE);
-  vrMenuMove.hasGrabPoint = !!hitPoint;
-  if (hitPoint) {
-    vrMenuMove.localGrabPoint.copy(vrQuickMenu.group.worldToLocal(hitPoint.clone()));
-  } else {
-    vrMenuMove.localGrabPoint.set(0, 0, 0);
-  }
+  vrMenuMove.orbitRadius = THREE.MathUtils.clamp(Math.hypot(dx, dz), 0.24, 2.2);
+  vrMenuMove.orbitHeightOffset = vrQuickMenu.group.position.y - vrMenuMoveHeadPos.y;
+  vrMenuMove.grabPointY = Number.isFinite(hitPoint?.y) ? hitPoint.y : vrQuickMenu.group.position.y;
   return true;
 }
 
@@ -717,8 +727,9 @@ function endVrMenuMove(controllerIndex=null) {
   vrMenuMove.active = false;
   vrMenuMove.controllerIndex = -1;
   vrMenuMove.hitDistance = VR_MENU_DISTANCE;
-  vrMenuMove.hasGrabPoint = false;
-  vrMenuMove.localGrabPoint.set(0, 0, 0);
+  vrMenuMove.orbitRadius = VR_MENU_DISTANCE;
+  vrMenuMove.orbitHeightOffset = VR_MENU_DOWN_OFFSET;
+  vrMenuMove.grabPointY = 0;
   return true;
 }
 
@@ -750,16 +761,39 @@ function updateVrMenuMove() {
     return;
   }
   if (!readControllerWorldRay(state.controller)) return;
+  const xrCam = renderer.xr.getCamera(camera);
+  if (!xrCam) return;
+  xrCam.updateMatrixWorld(true);
+  vrMenuMoveHeadPos.setFromMatrixPosition(xrCam.matrixWorld);
 
   vrMenuMoveWorldPoint.copy(xrRayOrigin).addScaledVector(xrRayDir, vrMenuMove.hitDistance);
-  if (vrMenuMove.hasGrabPoint) {
-    vrMenuMoveOffsetWorld.copy(vrMenuMove.localGrabPoint);
-    vrMenuMoveOffsetWorld.multiply(vrQuickMenu.group.scale);
-    vrMenuMoveOffsetWorld.applyQuaternion(vrQuickMenu.group.quaternion);
-    vrQuickMenu.group.position.copy(vrMenuMoveWorldPoint).sub(vrMenuMoveOffsetWorld);
-  } else {
-    vrQuickMenu.group.position.copy(vrMenuMoveWorldPoint);
+  vrMenuMoveHoriz.set(
+    vrMenuMoveWorldPoint.x - vrMenuMoveHeadPos.x,
+    0,
+    vrMenuMoveWorldPoint.z - vrMenuMoveHeadPos.z
+  );
+  if (vrMenuMoveHoriz.lengthSq() < 1e-8) {
+    vrMenuMoveHoriz.set(
+      vrQuickMenu.group.position.x - vrMenuMoveHeadPos.x,
+      0,
+      vrQuickMenu.group.position.z - vrMenuMoveHeadPos.z
+    );
+    if (vrMenuMoveHoriz.lengthSq() < 1e-8) vrMenuMoveHoriz.set(0, 0, -1);
   }
+  vrMenuMoveHoriz.normalize().multiplyScalar(vrMenuMove.orbitRadius);
+  vrQuickMenu.group.position.x = vrMenuMoveHeadPos.x + vrMenuMoveHoriz.x;
+  vrQuickMenu.group.position.z = vrMenuMoveHeadPos.z + vrMenuMoveHoriz.z;
+
+  const yDelta = vrMenuMoveWorldPoint.y - vrMenuMove.grabPointY;
+  const nextYOffset = THREE.MathUtils.clamp(vrMenuMove.orbitHeightOffset + yDelta, -0.75, 0.45);
+  vrQuickMenu.group.position.y = vrMenuMoveHeadPos.y + nextYOffset;
+
+  const toHeadX = vrMenuMoveHeadPos.x - vrQuickMenu.group.position.x;
+  const toHeadZ = vrMenuMoveHeadPos.z - vrQuickMenu.group.position.z;
+  const yaw = Number.isFinite(toHeadX) && Number.isFinite(toHeadZ)
+    ? Math.atan2(toHeadX, toHeadZ)
+    : 0;
+  vrQuickMenu.group.rotation.set(0, yaw, 0);
   vrQuickMenu.group.updateMatrixWorld(true);
 }
 
@@ -1251,13 +1285,9 @@ function alignVrYawToDesktop(xrCam) {
   xrCurrentForward.normalize();
 
   xrDesktopForward.set(xrEntryForward.x, 0, xrEntryForward.z).normalize();
-  const dot = THREE.MathUtils.clamp(
-    (xrCurrentForward.x * xrDesktopForward.x) + (xrCurrentForward.z * xrDesktopForward.z),
-    -1,
-    1
-  );
-  const crossY = (xrCurrentForward.x * xrDesktopForward.z) - (xrCurrentForward.z * xrDesktopForward.x);
-  const deltaYaw = Math.atan2(crossY, dot);
+  const currentYaw = Math.atan2(xrCurrentForward.x, xrCurrentForward.z);
+  const targetYaw = Math.atan2(xrDesktopForward.x, xrDesktopForward.z);
+  const deltaYaw = THREE.MathUtils.euclideanModulo((targetYaw - currentYaw) + Math.PI, Math.PI * 2) - Math.PI;
   if (!Number.isFinite(deltaYaw)) return;
   xrRig.rotation.y += deltaYaw;
   xrNeedsYawAlignment = false;
