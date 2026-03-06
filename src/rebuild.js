@@ -347,7 +347,7 @@ function rebuildCrashMatsGeometry() {
 
 // ── Human scale references (adult + child using man.png silhouette) ──
 (function() {
-  const adultH = 1.75;
+  const adultH = 1.73;
   const childH = SON_HEIGHT;
   const personOpacity = 0.5;
   const baseZ = D * 0.5;
