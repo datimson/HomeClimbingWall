@@ -673,6 +673,38 @@ const claddingMat = new THREE.MeshStandardMaterial({
   roughness: 0.78,
   metalness: 0.30
 });
+function makeMonumentAxonTexture() {
+  const cv = document.createElement('canvas');
+  cv.width = 512;
+  cv.height = 512;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return null;
+  ctx.fillStyle = '#43484f';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  const groove = 42;
+  for (let x = 0; x < cv.width; x += groove) {
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(x, 0, 2, cv.height);
+    ctx.fillStyle = 'rgba(0,0,0,0.14)';
+    ctx.fillRect(x + 3, 0, 2, cv.height);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1.0, 1.3);
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  if (renderer?.capabilities?.getMaxAnisotropy) {
+    tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  }
+  tex.needsUpdate = true;
+  return tex;
+}
+const rearWallCladdingMat = new THREE.MeshLambertMaterial({
+  color: 0xffffff,
+  map: makeMonumentAxonTexture(),
+  side: THREE.DoubleSide,
+});
 const polyRoofMat = new THREE.MeshLambertMaterial({
   color: 0xbfd6ea,
   side: THREE.DoubleSide,

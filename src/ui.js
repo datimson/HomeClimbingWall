@@ -127,9 +127,11 @@ const xrRayOrigin = new THREE.Vector3();
 const xrRayDir = new THREE.Vector3();
 const xrRaycastHit = new THREE.Vector3();
 const xrHeadWorld = new THREE.Vector3();
+const xrHeadLocal = new THREE.Vector3();
 const xrRayPlane = new THREE.Plane();
 const xrRay = new THREE.Ray();
 const xrRayMatrix = new THREE.Matrix4();
+const xrRigInvMatrix = new THREE.Matrix4();
 const xrRaycaster = new THREE.Raycaster();
 const xrStartWorld = new THREE.Vector3();
 const xrDesktopForward = new THREE.Vector3();
@@ -1219,11 +1221,16 @@ function recalcXrStandingEyeHeightFromHead() {
   const xrCam = renderer.xr.getCamera(camera);
   if (!xrCam) return false;
   xrCam.updateMatrixWorld(true);
+  xrRig.updateMatrixWorld(true);
   xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
-  const floorY = getActiveFloorY(xrHeadWorld.x, xrHeadWorld.z);
-  const measured = xrHeadWorld.y - floorY;
+  xrRigInvMatrix.copy(xrRig.matrixWorld).invert();
+  xrHeadLocal.copy(xrHeadWorld).applyMatrix4(xrRigInvMatrix);
+  const measured = xrHeadLocal.y;
   if (!Number.isFinite(measured)) return false;
-  setXrStandingEyeHeight(measured, {persist: true, applyGroundSnap: true});
+  setXrStandingEyeHeight(measured, {persist: true, applyGroundSnap: false});
+  xrNeedsGroundSnap = true;
+  updateGroundFloorFromHead(xrCam, true);
+  targetY = xrRig.position.y;
   return true;
 }
 

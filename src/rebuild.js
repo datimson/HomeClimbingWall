@@ -984,7 +984,7 @@ rebuildFloorSlab();
   environmentGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(houseTopLoop), houseOutlineMat));
 
   // Rear openings facing outdoor area:
-  // - French door: 2.0m wide x 1.8m high, starts 0.5m from projection edge.
+  // - French door: 1.8m wide x 2.0m high, starts 0.5m from projection edge.
   // - Window: 1.5m wide x 1.2m high, starts 1.4m after door.
   // - Projection window: 1.2m wide x 0.6m high, sill 1.04m, starts 1.04m from rear corner.
   const openingFrameMat = new THREE.MeshLambertMaterial({ color: 0xe9ecef, side: THREE.DoubleSide });
@@ -1052,8 +1052,8 @@ rebuildFloorSlab();
     return glass;
   };
 
-  const frenchDoorW = 2.0;
-  const frenchDoorH = 1.8;
+  const frenchDoorW = 1.8;
+  const frenchDoorH = 2.0;
   const frenchDoorBottomY = 0.0;
   const frenchDoorOffsetFromProjection = 0.5;
   const doorZ0 = THREE.MathUtils.clamp(
@@ -1168,6 +1168,7 @@ rebuildFloorSlab();
   housePath.userData.context = 'housePath';
   housePath.add(new THREE.LineSegments(new THREE.EdgesGeometry(pathGeo), pathEdgeMat));
   environmentGroup.add(housePath);
+  const pathTopY = housePath.position.y;
 
   // Outdoor area slab (concrete):
   // - 100mm high
@@ -1216,8 +1217,6 @@ rebuildFloorSlab();
   if (benchLen > 0.15) {
     const benchMat = new THREE.MeshLambertMaterial({ color: 0xb18c61, side: THREE.DoubleSide });
     const benchEdgeMat = new THREE.LineBasicMaterial({ color: 0x5e4a37, transparent: true, opacity: 0.65 });
-    const slabTopY = outdoorSlabH;
-
     const benchBox = box(
       benchDepth,
       benchHeight,
@@ -1225,7 +1224,7 @@ rebuildFloorSlab();
       benchMat,
       0, 0, 0,
       projectedWallX - benchWallGap - (benchDepth * 0.5),
-      slabTopY + (benchHeight * 0.5),
+      pathTopY + (benchHeight * 0.5),
       (benchZ0 + benchZ1) * 0.5
     );
     benchBox.userData.context = 'outdoorBench';

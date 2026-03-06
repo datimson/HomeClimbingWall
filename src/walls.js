@@ -825,6 +825,7 @@ function addHoldsToVolumeMesh(group, mesh, seedLabel, count, normalFilter=null) 
     hold.quaternion.setFromUnitVectors(zAxis, face.normal);
     hold.rotateZ(rand() * Math.PI * 2);
     hold.position.copy(point).addScaledVector(face.normal, mountOffset);
+    group.worldToLocal(hold.position);
     hold.castShadow = true;
     hold.receiveShadow = true;
     group.add(hold);
@@ -870,6 +871,9 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
   const matKick = getWallMat(wallId, 'kick');
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
+  const rearShellMat = (typeof rearWallCladdingMat !== 'undefined' && rearWallCladdingMat)
+    ? rearWallCladdingMat
+    : matS2;
   const xL = pivotX - w/2, xR = pivotX + w/2;
   const needsBackClosure = Math.abs(angleDeg) > 0.001;
 
@@ -881,7 +885,7 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
     w,
     KICK,
     WALL_KICK_STRUCTURAL_DEPTH,
-    matKick,
+    rearShellMat,
     0, 0, 0,
     pivotX,
     KICK * 0.5,
@@ -897,7 +901,7 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
   }
 
   if (needsBackClosure) {
-    const backPanel = makeSideInfill(matS2, [
+    const backPanel = makeSideInfill(rearShellMat, [
       {x:xL, y:KICK,     z:backZ},
       {x:xR, y:KICK,     z:backZ},
       {x:xR, y:roofBackY,z:backZ},
@@ -986,6 +990,9 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
   const matKick = getWallMat(wallId, 'kick');
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
+  const rearShellMat = (wallId === 'A' && typeof rearWallCladdingMat !== 'undefined' && rearWallCladdingMat)
+    ? rearWallCladdingMat
+    : matS2;
   const mirrorU = wallId === 'A';
   const needsBackClosure = Math.abs(angleDeg) > 0.001;
   const backX = -WALL_KICK_STRUCTURAL_DEPTH;
@@ -998,7 +1005,7 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
     WALL_KICK_STRUCTURAL_DEPTH,
     KICK,
     depth,
-    matKick,
+    rearShellMat,
     0, 0, 0,
     -((WALL_KICK_STRUCTURAL_DEPTH * 0.5) + WALL_KICK_STRUCTURAL_GAP),
     KICK * 0.5,
@@ -1008,7 +1015,7 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
 
   if (needsBackClosure) {
     // Close the rear opening of the side-wall wedge on x=0.
-    const backPanel = makeSideInfill(matS2, [
+    const backPanel = makeSideInfill(rearShellMat, [
       {x:backX, y:KICK, z:0},
       {x:backX, y:KICK, z:depth},
       {x:backX, y:roofY1, z:depth},
@@ -1128,6 +1135,9 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
   const matKick = getWallMat(wallId, 'kick');
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
+  const rearShellMat = (typeof rearWallCladdingMat !== 'undefined' && rearWallCladdingMat)
+    ? rearWallCladdingMat
+    : matS2;
   const xL = pivotX - w/2;
   const xR = pivotX + w/2;
   const needsBackClosure = (Math.abs(angle1Deg) > 0.001) || (Math.abs(angle2Deg) > 0.001);
@@ -1139,7 +1149,7 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
     w,
     KICK,
     WALL_KICK_STRUCTURAL_DEPTH,
-    matKick,
+    rearShellMat,
     0, 0, 0,
     pivotX,
     KICK * 0.5,
@@ -1165,7 +1175,7 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
   const splitZ = h1 * Math.tan(r1);
 
   if (needsBackClosure) {
-    const backPanel = makeSideInfill(matS2, [
+    const backPanel = makeSideInfill(rearShellMat, [
       {x:xL, y:KICK,     z:backZ},
       {x:xR, y:KICK,     z:backZ},
       {x:xR, y:roofBackY,z:backZ},
@@ -2184,17 +2194,6 @@ function buildPolyRoofExtension(group, fixedSideLen, fWidth) {
     const postTopY = polyBottomAtZ(pz);
     placeVerticalPost(px, pz, postW, postD, postBottomY, postTopY);
   };
-  const placeBrace = (p0, p1, thickness=0.06) => {
-    const axis = new THREE.Vector3().subVectors(p1, p0);
-    const len = axis.length();
-    if (len <= 0.03) return;
-    const mid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
-    const brace = box(thickness, len, thickness, polyRoofPostMat, 0, 0, 0, mid.x, mid.y, mid.z);
-    brace.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis.normalize());
-    brace.castShadow = true;
-    brace.receiveShadow = true;
-    group.add(brace);
-  };
   placePost(pxL, pzF);
   placePost(pxR, pzF);
   placePost(pxR, pzB);
@@ -2202,11 +2201,9 @@ function buildPolyRoofExtension(group, fixedSideLen, fWidth) {
   // Secondary support from the dedicated E support post up to the poly roof corner.
   const support = getESupportPostLayout(fixedSideLen);
   if (support.x > x0 && support.x < x1 && support.z > z0 && support.z < z1) {
-    const postTopY = roofTopYAtZ(support.z);
-    const braceStart = new THREE.Vector3(support.x, postTopY, support.z - (support.size * 0.35));
-    const braceEndZ = z1 - 0.015;
-    const braceEnd = new THREE.Vector3(support.x, polyBottomAtZ(braceEndZ), braceEndZ);
-    placeBrace(braceStart, braceEnd, 0.06);
+    const baseY = roofTopYAtZ(support.z);
+    const topY = polyBottomAtZ(support.z);
+    placeVerticalPost(support.x, support.z, 0.06, 0.06, baseY, topY);
   }
 }
 
