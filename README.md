@@ -20,22 +20,23 @@ Open [index.html](./index.html) directly in your browser.
 
 ## Edit all textures in one image
 
-You can pack all wall + volume textures into one editable atlas, then split it back:
+You can pack all wall + volume textures into one editable atlas, then split it back.
+Atlas workflows are now per wall design (`classic`, `variantB`, etc.):
 
 ```powershell
-scripts\texture-atlas-pack.bat
-scripts\texture-atlas-unpack.bat
+scripts\individual-to-atlas.bat -DesignId classic
+scripts\atlas-to-individual.bat -DesignId classic
 ```
 
 Generated files:
 
-- `textures/texture-atlas.png` (edit this)
-- `textures/texture-atlas.manifest.json` (used for slicing back)
+- `textures/designs/<designId>/texture-atlas.png` (edit this)
+- `textures/designs/<designId>/texture-atlas.manifest.json` (used for slicing back)
 
 Optional: include bump maps in the atlas too:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/texture-atlas-pack.ps1 -IncludeBumps
+powershell -ExecutionPolicy Bypass -File scripts/individual-to-atlas.ps1 -DesignId classic -IncludeBumps
 ```
 
 ## Screenshot

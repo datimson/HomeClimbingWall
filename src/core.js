@@ -157,37 +157,115 @@ const TRAINING_HANGBOARD_TOP_HEIGHT = 2.55;
 const SON_HEIGHT = 1.33;
 const CRASH_MAT_THICKNESS = 0.30;
 
-const WALL_STATE_STORAGE_KEY = 'climbingWall.wallState.v1';
-const WALL_DEFAULT_STATE_STORAGE_KEY = 'climbingWall.defaultState.v1';
-const CAMERA_STATE_STORAGE_KEY = 'climbingWall.cameraState.v1';
-const CRASH_MATS_STORAGE_KEY = 'climbingWall.crashMats.v1';
-const POLY_ROOF_STORAGE_KEY = 'climbingWall.polyRoof.v1';
-const TRAINING_RIG_STORAGE_KEY = 'climbingWall.trainingRig.v1';
-const TRAINING_CABINET_STORAGE_KEY = 'climbingWall.trainingCabinet.v1';
-const CAMPUS_BOARD_STORAGE_KEY = 'climbingWall.campusBoard.v1';
-const CONCEPT_VOLUMES_STORAGE_KEY = 'climbingWall.conceptVolumes.v1';
-const WALL_TEXTURES_STORAGE_KEY = 'climbingWall.wallTextures.v1';
-const CLIMBING_HOLDS_STORAGE_KEY = 'climbingWall.climbingHolds.v1';
-const CRASH_MAT_TEXTURE_STORAGE_KEY = 'climbingWall.crashMatTexture.v1';
-const TEXTURES_STORAGE_KEY = 'climbingWall.textures.v1';
-const ENVIRONMENT_STORAGE_KEY = 'climbingWall.environment.v1';
-const WALL_GEOMETRY_STATE_STORAGE_KEY = 'climbingWall.geometryState.v1';
-const WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY = 'climbingWall.geometryDefaultState.v1';
+const DESIGN_SYSTEM = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallDesignSystem
+) ? window.ClimbingWallDesignSystem : null;
+const APP_STATE = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallAppState
+) ? window.ClimbingWallAppState : null;
+const ACTIVE_DESIGN_ID = (
+  DESIGN_SYSTEM &&
+  typeof DESIGN_SYSTEM.getActiveDesignId === 'function'
+) ? DESIGN_SYSTEM.getActiveDesignId() : 'classic';
+const ACTIVE_DESIGN_DEF = (
+  DESIGN_SYSTEM &&
+  typeof DESIGN_SYSTEM.getDesignDefinition === 'function'
+) ? DESIGN_SYSTEM.getDesignDefinition(ACTIVE_DESIGN_ID) : null;
+const ACTIVE_STORAGE_KEYS = (
+  DESIGN_SYSTEM &&
+  typeof DESIGN_SYSTEM.getStorageKeysForDesign === 'function'
+) ? DESIGN_SYSTEM.getStorageKeysForDesign(ACTIVE_DESIGN_ID) : null;
+const ACTIVE_TEXTURE_CONFIG = (
+  DESIGN_SYSTEM &&
+  typeof DESIGN_SYSTEM.getTextureConfigForDesign === 'function'
+) ? DESIGN_SYSTEM.getTextureConfigForDesign(ACTIVE_DESIGN_ID) : null;
 
-const WALL_GEOMETRY_STATE_LIMITS = Object.freeze({
+const LEGACY_STORAGE_KEYS = Object.freeze({
+  wallState: 'climbingWall.wallState.v1',
+  wallDefaults: 'climbingWall.defaultState.v1',
+  cameraState: 'climbingWall.cameraState.v1',
+  crashMats: 'climbingWall.crashMats.v1',
+  polyRoof: 'climbingWall.polyRoof.v1',
+  trainingRig: 'climbingWall.trainingRig.v1',
+  trainingCabinet: 'climbingWall.trainingCabinet.v1',
+  campusBoard: 'climbingWall.campusBoard.v1',
+  conceptVolumes: 'climbingWall.conceptVolumes.v1',
+  wallTextures: 'climbingWall.wallTextures.v1',
+  climbingHolds: 'climbingWall.climbingHolds.v1',
+  crashMatTexture: 'climbingWall.crashMatTexture.v1',
+  textures: 'climbingWall.textures.v1',
+  environment: 'climbingWall.environment.v1',
+  geometryState: 'climbingWall.geometryState.v1',
+  geometryDefaults: 'climbingWall.geometryDefaultState.v1',
+});
+
+const STORAGE_KEYS = ACTIVE_STORAGE_KEYS || LEGACY_STORAGE_KEYS;
+const WALL_STATE_STORAGE_KEY = STORAGE_KEYS.wallState;
+const WALL_DEFAULT_STATE_STORAGE_KEY = STORAGE_KEYS.wallDefaults;
+const CAMERA_STATE_STORAGE_KEY = STORAGE_KEYS.cameraState;
+const CRASH_MATS_STORAGE_KEY = STORAGE_KEYS.crashMats;
+const POLY_ROOF_STORAGE_KEY = STORAGE_KEYS.polyRoof;
+const TRAINING_RIG_STORAGE_KEY = STORAGE_KEYS.trainingRig;
+const TRAINING_CABINET_STORAGE_KEY = STORAGE_KEYS.trainingCabinet;
+const CAMPUS_BOARD_STORAGE_KEY = STORAGE_KEYS.campusBoard;
+const CONCEPT_VOLUMES_STORAGE_KEY = STORAGE_KEYS.conceptVolumes;
+const WALL_TEXTURES_STORAGE_KEY = STORAGE_KEYS.wallTextures;
+const CLIMBING_HOLDS_STORAGE_KEY = STORAGE_KEYS.climbingHolds;
+const CRASH_MAT_TEXTURE_STORAGE_KEY = STORAGE_KEYS.crashMatTexture;
+const TEXTURES_STORAGE_KEY = STORAGE_KEYS.textures;
+const ENVIRONMENT_STORAGE_KEY = STORAGE_KEYS.environment;
+const WALL_GEOMETRY_STATE_STORAGE_KEY = STORAGE_KEYS.geometryState;
+const WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY = STORAGE_KEYS.geometryDefaults;
+
+function cloneLimitMap(source, fallback) {
+  const out = {};
+  const src = (source && typeof source === 'object') ? source : {};
+  Object.keys(fallback).forEach(key => {
+    const fallbackPair = Array.isArray(fallback[key]) ? fallback[key] : [0, 1];
+    const srcPair = Array.isArray(src[key]) ? src[key] : fallbackPair;
+    const min = Number(srcPair[0]);
+    const max = Number(srcPair[1]);
+    out[key] = [
+      Number.isFinite(min) ? min : fallbackPair[0],
+      Number.isFinite(max) ? max : fallbackPair[1],
+    ];
+  });
+  return out;
+}
+
+function cloneNumericSeed(source, fallback) {
+  const out = {};
+  const src = (source && typeof source === 'object') ? source : {};
+  Object.keys(fallback).forEach(key => {
+    const v = Number(src[key]);
+    out[key] = Number.isFinite(v) ? v : fallback[key];
+  });
+  return out;
+}
+
+const LEGACY_WALL_GEOMETRY_STATE_LIMITS = Object.freeze({
   width: [3.0, 7.0],
   depth: [2.5, 6.0],
   fixedHeight: [2.8, 4.5],
   adjustableHeight: [3.0, 5.5],
 });
+const WALL_GEOMETRY_STATE_LIMITS = Object.freeze(
+  cloneLimitMap(ACTIVE_DESIGN_DEF?.geometryLimits, LEGACY_WALL_GEOMETRY_STATE_LIMITS)
+);
 
-const BUILTIN_WALL_GEOMETRY_STATE = Object.freeze({
+const LEGACY_BUILTIN_WALL_GEOMETRY_STATE = Object.freeze({
   width: 4.5,
   depth: 3.5,
   fixedHeight: 3.5,
   adjustableHeight: 4.0,
 });
-const WALL_STATE_LIMITS = {
+const BUILTIN_WALL_GEOMETRY_STATE = Object.freeze(
+  cloneNumericSeed(ACTIVE_DESIGN_DEF?.geometryDefaults, LEGACY_BUILTIN_WALL_GEOMETRY_STATE)
+);
+
+const LEGACY_WALL_STATE_LIMITS = Object.freeze({
   aAngle: [0, 60], aWidth: [0.3, 2.5],
   bAngle: [0, 60], bWidth: [0.3, 2.5],
   cAngle: [0, 60], cWidth: [0.3, 2.5],
@@ -196,9 +274,10 @@ const WALL_STATE_LIMITS = {
   f1Angle: [0, 40], f1Height: [2.0, 2.7], f1Width: [0.1, 2.0],
   f2Angle: [0, 75], f2WidthTop: [0.3, W],
   rigOpen: [0, 180],
-};
+});
+const WALL_STATE_LIMITS = cloneLimitMap(ACTIVE_DESIGN_DEF?.wallStateLimits, LEGACY_WALL_STATE_LIMITS);
 
-const BUILTIN_DEFAULT_WALL_STATE = Object.freeze({
+const LEGACY_BUILTIN_DEFAULT_WALL_STATE = Object.freeze({
   aAngle: 10, aWidth: 1.35,
   bAngle: 10,  bWidth: 1.35,
   cAngle: 10, cWidth: 1.3,
@@ -210,6 +289,9 @@ const BUILTIN_DEFAULT_WALL_STATE = Object.freeze({
   f2Angle: 25, f2WidthTop: 1.35,
   rigOpen: 0,
 });
+const BUILTIN_DEFAULT_WALL_STATE = Object.freeze(
+  cloneNumericSeed(ACTIVE_DESIGN_DEF?.wallStateDefaults, LEGACY_BUILTIN_DEFAULT_WALL_STATE)
+);
 
 const BUILTIN_CAMERA_STATE = Object.freeze({
   theta: 1.6149999999999223,
@@ -377,6 +459,7 @@ function applyWallGeometryState(nextState, {rebuildScene=true, persistState=true
   if (typeof rebuildFloorSlab === 'function') rebuildFloorSlab();
   if (typeof updateEnvironmentAnchors === 'function') updateEnvironmentAnchors();
   if (rebuildScene && typeof rebuild === 'function') rebuild();
+  syncAppStateFromCore('geometry:update');
   return wallGeometryState;
 }
 
@@ -433,7 +516,9 @@ function loadCameraState() {
 
 function saveCameraState(cameraState) {
   const normalized = normalizeCameraState(cameraState, BUILTIN_CAMERA_STATE);
-  return persistWallState(CAMERA_STATE_STORAGE_KEY, normalized);
+  const ok = persistWallState(CAMERA_STATE_STORAGE_KEY, normalized);
+  if (ok) syncAppStateFromCore('camera:save');
+  return ok;
 }
 
 function loadDefaultWallState() {
@@ -472,6 +557,7 @@ function resetWallState() {
     wallState[key] = defaultWallState[key];
   });
   persistWallState(WALL_STATE_STORAGE_KEY, wallState);
+  syncAppStateFromCore('walls:reset');
 }
 
 // Wall state — angles and widths, all adjustable
@@ -598,6 +684,7 @@ function setCrashMatsEnabled(enabled) {
   if (crashMatsGroup) crashMatsGroup.visible = crashMatsEnabled;
   updateScalePersonFloorOffset();
   persistStoredBool(CRASH_MATS_STORAGE_KEY, crashMatsEnabled);
+  syncAppStateFromCore('toggle:crashMats');
 }
 
 function setCrashMatTextureEnabled(enabled) {
@@ -606,36 +693,42 @@ function setCrashMatTextureEnabled(enabled) {
   texturesEnabled = texturedWallsEnabled && crashMatTextureEnabled;
   persistStoredBool(TEXTURES_STORAGE_KEY, texturesEnabled);
   if (typeof rebuildCrashMatsGeometry === 'function') rebuildCrashMatsGeometry();
+  syncAppStateFromCore('toggle:crashMatTexture');
 }
 
 function setPolyRoofEnabled(enabled) {
   polyRoofEnabled = !!enabled;
   persistStoredBool(POLY_ROOF_STORAGE_KEY, polyRoofEnabled);
   if (typeof rebuild === 'function') rebuild();
+  syncAppStateFromCore('toggle:polyRoof');
 }
 
 function setTrainingRigEnabled(enabled) {
   trainingRigEnabled = !!enabled;
   persistStoredBool(TRAINING_RIG_STORAGE_KEY, trainingRigEnabled);
   if (typeof rebuild === 'function') rebuild();
+  syncAppStateFromCore('toggle:trainingRig');
 }
 
 function setTrainingCabinetEnabled(enabled) {
   trainingCabinetEnabled = !!enabled;
   persistStoredBool(TRAINING_CABINET_STORAGE_KEY, trainingCabinetEnabled);
   if (typeof rebuild === 'function') rebuild();
+  syncAppStateFromCore('toggle:trainingCabinet');
 }
 
 function setCampusBoardEnabled(enabled) {
   campusBoardEnabled = !!enabled;
   persistStoredBool(CAMPUS_BOARD_STORAGE_KEY, campusBoardEnabled);
   if (typeof rebuild === 'function') rebuild();
+  syncAppStateFromCore('toggle:campusBoard');
 }
 
 function setConceptVolumesEnabled(enabled) {
   conceptVolumesEnabled = !!enabled;
   persistStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, conceptVolumesEnabled);
   if (typeof rebuild === 'function') rebuild();
+  syncAppStateFromCore('toggle:conceptVolumes');
 }
 
 function setTexturedWallsEnabled(enabled) {
@@ -645,6 +738,7 @@ function setTexturedWallsEnabled(enabled) {
   persistStoredBool(TEXTURES_STORAGE_KEY, texturesEnabled);
   updateAllWallMaterials();
   applyConceptVolumeMaterialStyle();
+  syncAppStateFromCore('toggle:texturedWalls');
 }
 
 function setTexturesEnabled(enabled) {
@@ -657,18 +751,21 @@ function setTexturesEnabled(enabled) {
   updateAllWallMaterials();
   applyConceptVolumeMaterialStyle();
   if (typeof rebuildCrashMatsGeometry === 'function') rebuildCrashMatsGeometry();
+  syncAppStateFromCore('toggle:textures');
 }
 
 function setClimbingHoldsEnabled(enabled) {
   climbingHoldsEnabled = !!enabled;
   persistStoredBool(CLIMBING_HOLDS_STORAGE_KEY, climbingHoldsEnabled);
   if (typeof rebuild === 'function') rebuild();
+  syncAppStateFromCore('toggle:climbingHolds');
 }
 
 function setEnvironmentEnabled(enabled) {
   environmentEnabled = !!enabled;
   persistStoredBool(ENVIRONMENT_STORAGE_KEY, environmentEnabled);
   applyEnvironmentVisualState();
+  syncAppStateFromCore('toggle:environment');
 }
 
 // ── Materials ──
@@ -773,14 +870,22 @@ const WALL_TEXTURE_ROOM_CENTER = new THREE.Vector3(
   H_fixed * 0.52,
   WALL_ORIGIN_Z + (D * 0.5)
 );
-const CUSTOM_WALL_TEXTURE_DIR = 'textures/walls';
+const CUSTOM_WALL_TEXTURE_DIRS = (
+  Array.isArray(ACTIVE_TEXTURE_CONFIG?.wallDirs) &&
+  ACTIVE_TEXTURE_CONFIG.wallDirs.length
+) ? ACTIVE_TEXTURE_CONFIG.wallDirs.slice() : ['textures/walls'];
+const CUSTOM_WALL_TEXTURE_DIR = CUSTOM_WALL_TEXTURE_DIRS[0];
 const DEFAULT_PLYWOOD_PREVIEW_DIR = 'textures/sources/plywood04517';
 const DEFAULT_PLYWOOD_REPEAT_X = 2.0;
 const DEFAULT_PLYWOOD_REPEAT_Y = 1.9;
 let wallCustomTextureEntries = {};
 let wallTextureLoader = null;
 const CONCEPT_VOLUME_TEXTURE_IDS = ['default', 'cornerAB', 'ceilingG', 'dartC', 'dartB'];
-const CONCEPT_VOLUME_TEXTURE_DIR = 'textures/volumes';
+const CONCEPT_VOLUME_TEXTURE_DIRS = (
+  Array.isArray(ACTIVE_TEXTURE_CONFIG?.volumeDirs) &&
+  ACTIVE_TEXTURE_CONFIG.volumeDirs.length
+) ? ACTIVE_TEXTURE_CONFIG.volumeDirs.slice() : ['textures/volumes'];
+const CONCEPT_VOLUME_TEXTURE_DIR = CONCEPT_VOLUME_TEXTURE_DIRS[0];
 let conceptVolumeMats = {};
 let volumeCustomTextureEntries = {};
 let volumeTextureLoader = null;
@@ -847,6 +952,42 @@ function configureLoadedTiledTexture(tex, repeatX=1, repeatY=1) {
   return tex;
 }
 
+function dedupePathList(paths) {
+  const seen = new Set();
+  const out = [];
+  (paths || []).forEach(path => {
+    if (!path || seen.has(path)) return;
+    seen.add(path);
+    out.push(path);
+  });
+  return out;
+}
+
+function loadTextureFromCandidates(loader, candidates, onLoad, onAllFailed) {
+  const list = dedupePathList(candidates);
+  if (!loader || !list.length) {
+    if (typeof onAllFailed === 'function') onAllFailed();
+    return;
+  }
+  let idx = 0;
+  const tryNext = () => {
+    if (idx >= list.length) {
+      if (typeof onAllFailed === 'function') onAllFailed();
+      return;
+    }
+    const path = list[idx++];
+    loader.load(
+      path,
+      tex => {
+        if (typeof onLoad === 'function') onLoad(tex, path);
+      },
+      undefined,
+      () => tryNext()
+    );
+  };
+  tryNext();
+}
+
 function getTextureImageSize(tex) {
   const img = tex?.image;
   if (!img) return null;
@@ -907,16 +1048,16 @@ function getWallCustomTextureEntry(textureKey) {
 
   if (!entry.frontAttempted && !entry.frontLoading) {
     entry.frontLoading = true;
-    const frontPath = `${CUSTOM_WALL_TEXTURE_DIR}/${textureKey}.png`;
-    wallTextureLoader.load(
-      frontPath,
+    const frontCandidates = CUSTOM_WALL_TEXTURE_DIRS.map(dir => `${dir}/${textureKey}.png`);
+    loadTextureFromCandidates(
+      wallTextureLoader,
+      frontCandidates,
       tex => {
         entry.front = configureLoadedWallTexture(tex);
         entry.frontAttempted = true;
         entry.frontLoading = false;
         updateAllWallMaterials();
       },
-      undefined,
       () => {
         entry.front = null;
         entry.frontAttempted = true;
@@ -927,16 +1068,16 @@ function getWallCustomTextureEntry(textureKey) {
 
   if (!entry.bumpAttempted && !entry.bumpLoading) {
     entry.bumpLoading = true;
-    const bumpPath = `${CUSTOM_WALL_TEXTURE_DIR}/${textureKey}-bump.png`;
-    wallTextureLoader.load(
-      bumpPath,
+    const bumpCandidates = CUSTOM_WALL_TEXTURE_DIRS.map(dir => `${dir}/${textureKey}-bump.png`);
+    loadTextureFromCandidates(
+      wallTextureLoader,
+      bumpCandidates,
       tex => {
         entry.bump = configureLoadedWallTexture(tex);
         entry.bumpAttempted = true;
         entry.bumpLoading = false;
         updateAllWallMaterials();
       },
-      undefined,
       () => {
         entry.bump = null;
         entry.bumpAttempted = true;
@@ -985,16 +1126,16 @@ function getVolumeCustomTextureEntry(id) {
 
   if (!entry.frontAttempted && !entry.frontLoading) {
     entry.frontLoading = true;
-    const frontPath = `${CONCEPT_VOLUME_TEXTURE_DIR}/${id}.png`;
-    volumeTextureLoader.load(
-      frontPath,
+    const frontCandidates = CONCEPT_VOLUME_TEXTURE_DIRS.map(dir => `${dir}/${id}.png`);
+    loadTextureFromCandidates(
+      volumeTextureLoader,
+      frontCandidates,
       tex => {
         entry.front = configureLoadedWallTexture(tex);
         entry.frontAttempted = true;
         entry.frontLoading = false;
         applyConceptVolumeMaterialStyle(id);
       },
-      undefined,
       () => {
         entry.front = null;
         entry.frontAttempted = true;
@@ -1005,16 +1146,16 @@ function getVolumeCustomTextureEntry(id) {
 
   if (!entry.bumpAttempted && !entry.bumpLoading) {
     entry.bumpLoading = true;
-    const bumpPath = `${CONCEPT_VOLUME_TEXTURE_DIR}/${id}-bump.png`;
-    volumeTextureLoader.load(
-      bumpPath,
+    const bumpCandidates = CONCEPT_VOLUME_TEXTURE_DIRS.map(dir => `${dir}/${id}-bump.png`);
+    loadTextureFromCandidates(
+      volumeTextureLoader,
+      bumpCandidates,
       tex => {
         entry.bump = configureLoadedWallTexture(tex);
         entry.bumpAttempted = true;
         entry.bumpLoading = false;
         applyConceptVolumeMaterialStyle(id);
       },
-      undefined,
       () => {
         entry.bump = null;
         entry.bumpAttempted = true;
@@ -1581,3 +1722,104 @@ applyRoofMaterialStyle();
 
 // ── Collision precedence ──
 let precedence = ['A','B','C','D','E'];
+
+function buildCoreAppStateSnapshot() {
+  return {
+    meta: {
+      activeDesignId: ACTIVE_DESIGN_ID,
+    },
+    geometry: {
+      ...wallGeometryState,
+    },
+    walls: {
+      ...wallState,
+    },
+    camera: loadCameraState(),
+    site: {
+      ...SITE_LAYOUT,
+      wallOriginX: WALL_ORIGIN_X,
+      wallOriginZ: WALL_ORIGIN_Z,
+    },
+    toggles: {
+      crashMatsEnabled,
+      polyRoofEnabled,
+      trainingRigEnabled,
+      trainingCabinetEnabled,
+      campusBoardEnabled,
+      conceptVolumesEnabled,
+      texturedWallsEnabled,
+      climbingHoldsEnabled,
+      crashMatTextureEnabled,
+      texturesEnabled,
+      environmentEnabled,
+    },
+    tools: {
+      measurement: (
+        DESIGN_SYSTEM &&
+        DESIGN_SYSTEM.measurementToolPlan &&
+        DESIGN_SYSTEM.measurementToolPlan.defaults
+      ) ? {...DESIGN_SYSTEM.measurementToolPlan.defaults} : null,
+    },
+  };
+}
+
+function applyCoreSnapshotToLegacy(nextState, options={}) {
+  if (!nextState || typeof nextState !== 'object') return false;
+  const rebuildScene = options.rebuildScene !== false;
+  let needsRebuild = false;
+
+  if (nextState.geometry && typeof nextState.geometry === 'object') {
+    applyWallGeometryState(nextState.geometry, {
+      rebuildScene: false,
+      persistState: true,
+      persistDefaults: false,
+    });
+    needsRebuild = true;
+  }
+  if (nextState.walls && typeof nextState.walls === 'object') {
+    Object.keys(wallState).forEach(key => {
+      if (!Object.prototype.hasOwnProperty.call(nextState.walls, key)) return;
+      const raw = Number(nextState.walls[key]);
+      if (!Number.isFinite(raw)) return;
+      wallState[key] = clampWallStateValue(key, raw);
+    });
+    persistWallState(WALL_STATE_STORAGE_KEY, wallState);
+    needsRebuild = true;
+  }
+  if (nextState.toggles && typeof nextState.toggles === 'object') {
+    const t = nextState.toggles;
+    if (typeof t.crashMatsEnabled === 'boolean') setCrashMatsEnabled(t.crashMatsEnabled);
+    if (typeof t.polyRoofEnabled === 'boolean') setPolyRoofEnabled(t.polyRoofEnabled);
+    if (typeof t.trainingRigEnabled === 'boolean') setTrainingRigEnabled(t.trainingRigEnabled);
+    if (typeof t.trainingCabinetEnabled === 'boolean') setTrainingCabinetEnabled(t.trainingCabinetEnabled);
+    if (typeof t.campusBoardEnabled === 'boolean') setCampusBoardEnabled(t.campusBoardEnabled);
+    if (typeof t.conceptVolumesEnabled === 'boolean') setConceptVolumesEnabled(t.conceptVolumesEnabled);
+    if (typeof t.texturesEnabled === 'boolean') setTexturesEnabled(t.texturesEnabled);
+    if (typeof t.climbingHoldsEnabled === 'boolean') setClimbingHoldsEnabled(t.climbingHoldsEnabled);
+    if (typeof t.environmentEnabled === 'boolean') setEnvironmentEnabled(t.environmentEnabled);
+  }
+  if (nextState.camera && typeof saveCameraState === 'function') {
+    saveCameraState(nextState.camera);
+  }
+  if (needsRebuild && rebuildScene && typeof rebuild === 'function') rebuild();
+  return true;
+}
+
+function syncAppStateFromCore(source='core') {
+  if (!APP_STATE || typeof APP_STATE.patchState !== 'function') return false;
+  APP_STATE.patchState(buildCoreAppStateSnapshot(), {emit: true, source});
+  return true;
+}
+
+if (APP_STATE && typeof APP_STATE.registerLegacyAdapter === 'function') {
+  APP_STATE.registerLegacyAdapter('core', {
+    getSnapshot: buildCoreAppStateSnapshot,
+    applySnapshot: applyCoreSnapshotToLegacy,
+  });
+}
+if (APP_STATE && typeof APP_STATE.patchState === 'function') {
+  APP_STATE.patchState(buildCoreAppStateSnapshot(), {emit: false, source: 'core:init'});
+}
+if (typeof window !== 'undefined') {
+  window.syncAppStateFromCore = syncAppStateFromCore;
+}

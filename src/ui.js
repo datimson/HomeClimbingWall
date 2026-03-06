@@ -62,6 +62,9 @@ function requestRebuild({immediate=false} = {}) {
   if (typeof rebuild !== 'function') return;
   const run = () => {
     lastRebuildAt = performance.now();
+    if (typeof window?.syncAppStateFromCore === 'function') {
+      window.syncAppStateFromCore('ui:requestRebuild');
+    }
     rebuild();
   };
   if (immediate) {
@@ -600,6 +603,9 @@ function applyVrMenuStateKey(key, nextValue) {
     rigToggleAnim.targetDeg = null;
     rigToggleAnim.lastRebuildDeg = NaN;
     setRigOpenValue(clamped, true);
+    if (typeof window?.syncAppStateFromCore === 'function') {
+      window.syncAppStateFromCore('ui:vr:rigOpen');
+    }
     refreshVrQuickMenuValues();
     return;
   }
@@ -2549,6 +2555,60 @@ window.addEventListener('keyup', e => {
 window.addEventListener('blur', clearDesktopMoveKeys);
 
 // ── Slider wiring ──
+const UI_DESIGN_SYSTEM = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallDesignSystem
+) ? window.ClimbingWallDesignSystem : null;
+const UI_ACTIVE_DESIGN_DEF = (
+  UI_DESIGN_SYSTEM &&
+  typeof UI_DESIGN_SYSTEM.getDesignDefinition === 'function'
+) ? UI_DESIGN_SYSTEM.getDesignDefinition() : null;
+const FALLBACK_GEOMETRY_SLIDER_SCHEMA = Object.freeze([
+  {id: 'roomWidth', stateKey: 'width', labelId: 'roomWidthLabel', fmt: 'm2'},
+  {id: 'roomDepth', stateKey: 'depth', labelId: 'roomDepthLabel', fmt: 'm2'},
+  {id: 'fixedHeight', stateKey: 'fixedHeight', labelId: 'fixedHeightLabel', fmt: 'm2'},
+  {id: 'adjHeight', stateKey: 'adjustableHeight', labelId: 'adjHeightLabel', fmt: 'm2'},
+]);
+const FALLBACK_WALL_SLIDER_SCHEMA = Object.freeze([
+  {id: 'angleSlider', stateKey: 'eAngle', labelId: 'angleLabel', fmt: 'deg', rebuild: true},
+  {id: 'aAngle', stateKey: 'aAngle', labelId: 'aAngleLabel', fmt: 'deg', rebuild: true},
+  {id: 'aWidth', stateKey: 'aWidth', labelId: 'aWidthLabel', fmt: 'm2', rebuild: true},
+  {id: 'bAngle', stateKey: 'bAngle', labelId: 'bAngleLabel', fmt: 'deg', rebuild: true},
+  {id: 'bWidth', stateKey: 'bWidth', labelId: 'bWidthLabel', fmt: 'm2', rebuild: true},
+  {id: 'cAngle', stateKey: 'cAngle', labelId: 'cAngleLabel', fmt: 'deg', rebuild: true},
+  {id: 'cWidth', stateKey: 'cWidth', labelId: 'cWidthLabel', fmt: 'm2', rebuild: true},
+  {id: 'dAngle', stateKey: 'dAngle', labelId: 'dAngleLabel', fmt: 'deg', rebuild: true},
+  {id: 'd1Height', stateKey: 'd1Height', labelId: 'd1HeightLabel', fmt: 'm2', rebuild: true},
+  {id: 'd2Angle', stateKey: 'd2Angle', labelId: 'd2AngleLabel', fmt: 'deg', rebuild: true},
+  {id: 'f1Angle', stateKey: 'f1Angle', labelId: 'f1AngleLabel', fmt: 'deg', rebuild: true},
+  {id: 'f1Height', stateKey: 'f1Height', labelId: 'f1HeightLabel', fmt: 'm2', rebuild: true},
+  {id: 'f1Width', stateKey: 'f1Width', labelId: 'f1WidthLabel', fmt: 'm2', rebuild: true},
+  {id: 'f2Angle', stateKey: 'f2Angle', labelId: 'f2AngleLabel', fmt: 'deg', rebuild: true},
+  {id: 'f2WidthTop', stateKey: 'f2WidthTop', labelId: 'f2WidthTopLabel', fmt: 'm2', rebuild: true},
+  {id: 'rigOpen', stateKey: 'rigOpen', labelId: 'rigOpenLabel', fmt: 'degRound', rebuild: true},
+]);
+const PANEL_GEOMETRY_SLIDER_SCHEMA = (
+  Array.isArray(UI_ACTIVE_DESIGN_DEF?.panelSchema?.geometry) &&
+  UI_ACTIVE_DESIGN_DEF.panelSchema.geometry.length
+) ? UI_ACTIVE_DESIGN_DEF.panelSchema.geometry : FALLBACK_GEOMETRY_SLIDER_SCHEMA;
+const PANEL_WALL_SLIDER_SCHEMA = (
+  Array.isArray(UI_ACTIVE_DESIGN_DEF?.panelSchema?.walls) &&
+  UI_ACTIVE_DESIGN_DEF.panelSchema.walls.length
+) ? UI_ACTIVE_DESIGN_DEF.panelSchema.walls : FALLBACK_WALL_SLIDER_SCHEMA;
+
+function formatSliderValueByToken(value, fmt) {
+  switch (fmt) {
+    case 'deg':
+      return `${value}°`;
+    case 'degRound':
+      return `${Math.round(value)}°`;
+    case 'm2':
+      return `${value.toFixed(2)}m`;
+    default:
+      return String(value);
+  }
+}
+
 function syncDynamicSliderBounds() {
   const clampInputToRange = (id, min, max) => {
     const el = document.getElementById(id);
@@ -2614,19 +2674,17 @@ function bindGeometrySlider(id, labelId, geometryKey, fmt) {
 }
 
 function syncGeometrySlidersFromState() {
-  const defs = [
-    ['roomWidth', 'roomWidthLabel', 'width'],
-    ['roomDepth', 'roomDepthLabel', 'depth'],
-    ['fixedHeight', 'fixedHeightLabel', 'fixedHeight'],
-    ['adjHeight', 'adjHeightLabel', 'adjustableHeight'],
-  ];
-  defs.forEach(([id, labelId, key]) => {
+  PANEL_GEOMETRY_SLIDER_SCHEMA.forEach(def => {
+    const id = def.id;
+    const labelId = def.labelId;
+    const key = def.stateKey;
+    const fmt = def.fmt;
     const el = document.getElementById(id);
     const lbl = document.getElementById(labelId);
     const v = Number(wallGeometryState[key]);
     if (!el || !Number.isFinite(v)) return;
     el.value = String(v);
-    if (lbl) lbl.textContent = `${v.toFixed(2)}m`;
+    if (lbl) lbl.textContent = formatSliderValueByToken(v, fmt);
   });
   syncDynamicSliderBounds();
   syncGeometryCards();
@@ -2647,6 +2705,9 @@ function bindSlider(id, labelId, stateKey, fmt, triggerRebuild) {
       rigToggleAnim.lastRebuildDeg = NaN;
       if (lbl) lbl.textContent = fmt(v);
       setRigOpenValue(v, true);
+      if (typeof window?.syncAppStateFromCore === 'function') {
+        window.syncAppStateFromCore('ui:slider:rigOpen');
+      }
       return;
     }
     wallState[stateKey] = v;
@@ -2656,59 +2717,47 @@ function bindSlider(id, labelId, stateKey, fmt, triggerRebuild) {
       if (stateKey === 'eAngle' && typeof setAdjAngle === 'function') setAdjAngle(v);
       requestRebuild();
     }
-    else setAdjAngle(wallState.eAngle);
+    else {
+      setAdjAngle(wallState.eAngle);
+      if (typeof window?.syncAppStateFromCore === 'function') {
+        window.syncAppStateFromCore('ui:slider:noRebuild');
+      }
+    }
   });
 }
 
 function syncSlidersFromState() {
   syncDynamicSliderBounds();
-  const defs = [
-    ['angleSlider', 'angleLabel', 'eAngle', v => v + '°'],
-    ['aAngle', 'aAngleLabel', 'aAngle', v => v + '°'],
-    ['aWidth', 'aWidthLabel', 'aWidth', v => v.toFixed(2) + 'm'],
-    ['bAngle', 'bAngleLabel', 'bAngle', v => v + '°'],
-    ['bWidth', 'bWidthLabel', 'bWidth', v => v.toFixed(2) + 'm'],
-    ['cAngle', 'cAngleLabel', 'cAngle', v => v + '°'],
-    ['cWidth', 'cWidthLabel', 'cWidth', v => v.toFixed(2) + 'm'],
-    ['dAngle', 'dAngleLabel', 'dAngle', v => v + '°'],
-    ['d1Height', 'd1HeightLabel', 'd1Height', v => v.toFixed(2) + 'm'],
-    ['d2Angle', 'd2AngleLabel', 'd2Angle', v => v + '°'],
-    ['f1Angle', 'f1AngleLabel', 'f1Angle', v => v + '°'],
-    ['f1Height', 'f1HeightLabel', 'f1Height', v => v.toFixed(2) + 'm'],
-    ['f1Width', 'f1WidthLabel', 'f1Width', v => v.toFixed(2) + 'm'],
-    ['f2Angle', 'f2AngleLabel', 'f2Angle', v => v + '°'],
-    ['f2WidthTop', 'f2WidthTopLabel', 'f2WidthTop', v => v.toFixed(2) + 'm'],
-    ['rigOpen', 'rigOpenLabel', 'rigOpen', v => Math.round(v) + '°'],
-  ];
-  defs.forEach(([id, labelId, key, fmt]) => {
+  PANEL_WALL_SLIDER_SCHEMA.forEach(def => {
+    const id = def.id;
+    const labelId = def.labelId;
+    const key = def.stateKey;
+    const fmt = def.fmt;
     const el = document.getElementById(id);
     const lbl = document.getElementById(labelId);
     if (!el || !Number.isFinite(wallState[key])) return;
     el.value = String(wallState[key]);
-    if (lbl) lbl.textContent = fmt(wallState[key]);
+    if (lbl) lbl.textContent = formatSliderValueByToken(wallState[key], fmt);
   });
 }
 
-bindSlider('angleSlider', 'angleLabel', 'eAngle', v => v + '°', true);
-bindSlider('aAngle', 'aAngleLabel', 'aAngle', v => v + '°', true);
-bindSlider('aWidth', 'aWidthLabel', 'aWidth', v => v.toFixed(2) + 'm', true);
-bindSlider('bAngle', 'bAngleLabel', 'bAngle', v => v + '°', true);
-bindSlider('bWidth', 'bWidthLabel', 'bWidth', v => v.toFixed(2) + 'm', true);
-bindSlider('cAngle', 'cAngleLabel', 'cAngle', v => v + '°', true);
-bindSlider('cWidth', 'cWidthLabel', 'cWidth', v => v.toFixed(2) + 'm', true);
-bindSlider('dAngle', 'dAngleLabel', 'dAngle', v => v + '°', true);
-bindSlider('d1Height', 'd1HeightLabel', 'd1Height', v => v.toFixed(2) + 'm', true);
-bindSlider('d2Angle', 'd2AngleLabel', 'd2Angle', v => v + '°', true);
-bindSlider('f1Angle', 'f1AngleLabel', 'f1Angle', v => v + '°', true);
-bindSlider('f1Height', 'f1HeightLabel', 'f1Height', v => v.toFixed(2) + 'm', true);
-bindSlider('f1Width', 'f1WidthLabel', 'f1Width', v => v.toFixed(2) + 'm', true);
-bindSlider('f2Angle', 'f2AngleLabel', 'f2Angle', v => v + '°', true);
-bindSlider('f2WidthTop', 'f2WidthTopLabel', 'f2WidthTop', v => v.toFixed(2) + 'm', true);
-bindSlider('rigOpen', 'rigOpenLabel', 'rigOpen', v => Math.round(v) + '°', true);
-bindGeometrySlider('roomWidth', 'roomWidthLabel', 'width', v => v.toFixed(2) + 'm');
-bindGeometrySlider('roomDepth', 'roomDepthLabel', 'depth', v => v.toFixed(2) + 'm');
-bindGeometrySlider('fixedHeight', 'fixedHeightLabel', 'fixedHeight', v => v.toFixed(2) + 'm');
-bindGeometrySlider('adjHeight', 'adjHeightLabel', 'adjustableHeight', v => v.toFixed(2) + 'm');
+PANEL_WALL_SLIDER_SCHEMA.forEach(def => {
+  bindSlider(
+    def.id,
+    def.labelId,
+    def.stateKey,
+    v => formatSliderValueByToken(v, def.fmt),
+    def.rebuild !== false
+  );
+});
+PANEL_GEOMETRY_SLIDER_SCHEMA.forEach(def => {
+  bindGeometrySlider(
+    def.id,
+    def.labelId,
+    def.stateKey,
+    v => formatSliderValueByToken(v, def.fmt)
+  );
+});
 syncSlidersFromState();
 syncGeometrySlidersFromState();
 

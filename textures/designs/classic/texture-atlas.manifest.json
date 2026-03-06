@@ -1,0 +1,269 @@
+﻿{
+    "version":  1,
+    "createdUtc":  "2026-03-06T11:12:37.4213522Z",
+    "atlasPath":  "C:\\source\\HomeClimbingWall\\textures\\texture-atlas.png",
+    "textureRoot":  "C:\\source\\HomeClimbingWall\\textures",
+    "settings":  {
+                     "columns":  6,
+                     "rows":  5,
+                     "tileWidth":  2048,
+                     "tileHeight":  2048,
+                     "gap":  56,
+                     "padding":  56,
+                     "labelHeight":  58
+                 },
+    "entries":  [
+                    {
+                        "path":  "volumes/cornerAB.png",
+                        "x":  56,
+                        "y":  114,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  0,
+                        "cellRow":  0
+                    },
+                    {
+                        "path":  "volumes/dartB.png",
+                        "x":  2160,
+                        "y":  114,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  1,
+                        "cellRow":  0
+                    },
+                    {
+                        "path":  "walls/G.png",
+                        "x":  4264,
+                        "y":  114,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  2,
+                        "cellRow":  0
+                    },
+                    {
+                        "path":  "volumes/ceilingG.png",
+                        "x":  6368,
+                        "y":  114,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  3,
+                        "cellRow":  0
+                    },
+                    {
+                        "path":  "volumes/dartC.png",
+                        "x":  8472,
+                        "y":  114,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  4,
+                        "cellRow":  0
+                    },
+                    {
+                        "path":  "walls/A-s2.png",
+                        "x":  2160,
+                        "y":  2276,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  1,
+                        "cellRow":  1
+                    },
+                    {
+                        "path":  "walls/B-s2.png",
+                        "x":  4264,
+                        "y":  2276,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  2,
+                        "cellRow":  1
+                    },
+                    {
+                        "path":  "walls/C-s2.png",
+                        "x":  6368,
+                        "y":  2276,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  3,
+                        "cellRow":  1
+                    },
+                    {
+                        "path":  "walls/D-s2.png",
+                        "x":  8472,
+                        "y":  2276,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  4,
+                        "cellRow":  1
+                    },
+                    {
+                        "path":  "walls/F-s2.png",
+                        "x":  10576,
+                        "y":  2276,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  5,
+                        "cellRow":  1
+                    },
+                    {
+                        "path":  "walls/E-s1.png",
+                        "x":  56,
+                        "y":  4438,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  0,
+                        "cellRow":  2
+                    },
+                    {
+                        "path":  "walls/A-s1.png",
+                        "x":  2160,
+                        "y":  4438,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  1,
+                        "cellRow":  2
+                    },
+                    {
+                        "path":  "walls/B-s1.png",
+                        "x":  4264,
+                        "y":  4438,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  2,
+                        "cellRow":  2
+                    },
+                    {
+                        "path":  "walls/C-s1.png",
+                        "x":  6368,
+                        "y":  4438,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  3,
+                        "cellRow":  2
+                    },
+                    {
+                        "path":  "walls/D-s1.png",
+                        "x":  8472,
+                        "y":  4438,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  4,
+                        "cellRow":  2
+                    },
+                    {
+                        "path":  "walls/F-s1.png",
+                        "x":  10576,
+                        "y":  4438,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  5,
+                        "cellRow":  2
+                    },
+                    {
+                        "path":  "walls/E-kick.png",
+                        "x":  56,
+                        "y":  6600,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  0,
+                        "cellRow":  3
+                    },
+                    {
+                        "path":  "walls/A-kick.png",
+                        "x":  2160,
+                        "y":  6600,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  1,
+                        "cellRow":  3
+                    },
+                    {
+                        "path":  "walls/B-kick.png",
+                        "x":  4264,
+                        "y":  6600,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  2,
+                        "cellRow":  3
+                    },
+                    {
+                        "path":  "walls/C-kick.png",
+                        "x":  6368,
+                        "y":  6600,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  3,
+                        "cellRow":  3
+                    },
+                    {
+                        "path":  "walls/D-kick.png",
+                        "x":  8472,
+                        "y":  6600,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  4,
+                        "cellRow":  3
+                    },
+                    {
+                        "path":  "walls/F-kick.png",
+                        "x":  10576,
+                        "y":  6600,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  5,
+                        "cellRow":  3
+                    },
+                    {
+                        "path":  "walls/E.png",
+                        "x":  56,
+                        "y":  8762,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  0,
+                        "cellRow":  4
+                    },
+                    {
+                        "path":  "walls/A.png",
+                        "x":  2160,
+                        "y":  8762,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  1,
+                        "cellRow":  4
+                    },
+                    {
+                        "path":  "walls/B.png",
+                        "x":  4264,
+                        "y":  8762,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  2,
+                        "cellRow":  4
+                    },
+                    {
+                        "path":  "walls/C.png",
+                        "x":  6368,
+                        "y":  8762,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  3,
+                        "cellRow":  4
+                    },
+                    {
+                        "path":  "walls/D.png",
+                        "x":  8472,
+                        "y":  8762,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  4,
+                        "cellRow":  4
+                    },
+                    {
+                        "path":  "walls/F.png",
+                        "x":  10576,
+                        "y":  8762,
+                        "width":  2048,
+                        "height":  2048,
+                        "cellCol":  5,
+                        "cellRow":  4
+                    }
+                ]
+}
