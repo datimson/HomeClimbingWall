@@ -43,6 +43,8 @@ function persistCurrentCameraState() {
 }
 
 const XR_FLOOR_EYE_HEIGHT = 1.72;
+const XR_MIN_EYE_HEIGHT = 1.20;
+const XR_MAX_EYE_HEIGHT = 2.25;
 const XR_MOVE_SPEED_MPS = 1.9;
 const XR_FLY_SPEED_MPS = 1.7;
 const XR_CONTROLLER_VISUAL_OPACITY = 0.42;
@@ -72,6 +74,7 @@ let xrSessionRequestInFlight = false;
 let xrMoveMode = XR_MOVE_MODE.GROUNDED;
 let xrGroundFloorY = 0;
 let xrActiveControllerIndex = 0;
+let xrNeedsGroundSnap = false;
 const xrControllers = [];
 let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
@@ -90,6 +93,10 @@ const xrStartWorld = new THREE.Vector3();
 const xrDesktopForward = new THREE.Vector3();
 const xrCurrentForward = new THREE.Vector3();
 const xrMenuRaycaster = new THREE.Raycaster();
+const XR_QUEST_CONTROLLER_URLS = Object.freeze({
+  left: 'https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/oculus-touch-v3/left.glb',
+  right: 'https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/oculus-touch-v3/right.glb',
+});
 const XRControllerModelFactoryCtor = (
   (typeof THREE !== 'undefined' && typeof THREE.XRControllerModelFactory === 'function')
     ? THREE.XRControllerModelFactory
@@ -98,6 +105,16 @@ const XRControllerModelFactoryCtor = (
       : null)
 );
 const xrControllerModelFactory = XRControllerModelFactoryCtor ? new XRControllerModelFactoryCtor() : null;
+const GLTFLoaderCtor = (
+  (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader === 'function')
+    ? THREE.GLTFLoader
+    : ((typeof window !== 'undefined' && typeof window.GLTFLoader === 'function')
+      ? window.GLTFLoader
+      : null)
+);
+const xrControllerGltfLoader = GLTFLoaderCtor ? new GLTFLoaderCtor() : null;
+const xrQuestControllerModelTemplates = {left: null, right: null};
+const xrQuestControllerModelPromises = {left: null, right: null};
 const eSweepAnim = {
   active: false,
   speedDegPerSec: 16,
@@ -156,41 +173,155 @@ const VR_MENU_TARGET_KEYS = Object.freeze({
   G: [],
 });
 
+const VR_MENU_BG_COLOR = 0xd7dce2;
+const VR_MENU_TEXT_COLOR = '#2f3338';
+const VR_MENU_TEXT_DARK_COLOR = '#21262b';
+const VR_MENU_TRACK_COLOR = 0x9aa5b0;
+const VR_MENU_FILL_COLOR = 0x5f7183;
+const VR_MENU_KNOB_COLOR = 0x2f3338;
+const VR_MENU_PANEL_DISTANCE = 0.90;
+const VR_MENU_SIDE_OFFSET = 0.44;
+const VR_MENU_DOWN_OFFSET = -0.34;
+
 const vrQuickMenu = {
   group: null,
   target: null,
-  buttons: [],
+  interactive: [],
+  slidersByKey: {},
   open: false,
 };
+const vrMenuDrag = {
+  active: false,
+  controllerIndex: -1,
+  key: null,
+};
 
-function makeVrMenuTextSprite(text, width=0.46, height=0.11) {
-  const s = dimTextSprite(String(text));
-  s.scale.set(width, height, 1);
-  s.position.z = 0.004;
-  return s;
+function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = style.canvasWidth || 512;
+  canvas.height = style.canvasHeight || 128;
+  const ctx = canvas.getContext('2d');
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat);
+  mesh.renderOrder = 2140;
+  mesh.userData.textCanvas = canvas;
+  mesh.userData.textContext = ctx;
+  mesh.userData.textTexture = tex;
+  mesh.userData.textStyle = {
+    color: style.color || VR_MENU_TEXT_COLOR,
+    bg: style.bg || null,
+    fontPx: Number(style.fontPx) || 46,
+    fontWeight: style.fontWeight || '700',
+    align: style.align || 'center',
+    padding: Number(style.padding) || 26,
+  };
+  updateVrTextPlane(mesh, text);
+  return mesh;
 }
 
-function makeVrMenuButton(label, width=0.18, height=0.10, color=0x31435a) {
+function updateVrTextPlane(mesh, text) {
+  if (!mesh?.userData?.textCanvas || !mesh?.userData?.textContext || !mesh?.userData?.textTexture) return;
+  const canvas = mesh.userData.textCanvas;
+  const ctx = mesh.userData.textContext;
+  const style = mesh.userData.textStyle || {};
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (style.bg) {
+    ctx.fillStyle = style.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.fillStyle = style.color || VR_MENU_TEXT_COLOR;
+  ctx.font = `${style.fontWeight || '700'} ${style.fontPx || 46}px Arial, sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = style.align || 'center';
+  const pad = Number(style.padding) || 26;
+  let x = canvas.width * 0.5;
+  if (ctx.textAlign === 'left') x = pad;
+  else if (ctx.textAlign === 'right') x = canvas.width - pad;
+  ctx.fillText(String(text), x, canvas.height * 0.5);
+  mesh.userData.textTexture.needsUpdate = true;
+}
+
+function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
   const m = new THREE.Mesh(
     new THREE.PlaneGeometry(width, height),
     new THREE.MeshBasicMaterial({
       color,
-      transparent: true,
-      opacity: 0.92,
+      transparent: false,
+      opacity: 1.0,
       side: THREE.DoubleSide,
       depthTest: false,
       depthWrite: false,
     })
   );
   m.renderOrder = 2100;
-  const txt = makeVrMenuTextSprite(label, width * 0.78, height * 0.55);
+  const txt = makeVrTextPlane(label, width * 0.82, height * 0.60, {
+    color: VR_MENU_TEXT_DARK_COLOR,
+    fontPx: 42,
+    fontWeight: '700',
+  });
+  txt.position.z = 0.004;
   m.add(txt);
   return m;
 }
 
+function quantizeVrSliderValue(def, value) {
+  const min = Number(def?.min) || 0;
+  const max = Number(def?.max) || min;
+  let v = THREE.MathUtils.clamp(Number(value) || min, min, max);
+  const step = Math.abs(Number(def?.step) || 0);
+  if (step > 0) {
+    const n = Math.round((v - min) / step);
+    v = min + n * step;
+    const stepStr = String(step);
+    const fracLen = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
+    if (fracLen > 0) v = Number(v.toFixed(Math.min(6, fracLen + 1)));
+    v = THREE.MathUtils.clamp(v, min, max);
+  }
+  return v;
+}
+
+function updateVrMenuSliderVisual(slider, value) {
+  if (!slider) return;
+  const def = slider.def;
+  const min = Number(def.min) || 0;
+  const max = Number(def.max) || min;
+  const span = Math.max(1e-6, max - min);
+  const v = THREE.MathUtils.clamp(Number(value) || min, min, max);
+  const t = THREE.MathUtils.clamp((v - min) / span, 0, 1);
+  const trackW = slider.trackWidth;
+  const left = slider.trackCenterX - trackW * 0.5;
+  slider.fill.scale.x = Math.max(0.0001, t);
+  slider.fill.position.x = left + (trackW * t * 0.5);
+  slider.knob.position.x = left + trackW * t;
+  if (slider.valueLabel) updateVrTextPlane(slider.valueLabel, def.fmt(v));
+}
+
+function refreshVrQuickMenuValues() {
+  if (!vrQuickMenu.open) return;
+  Object.keys(vrQuickMenu.slidersByKey || {}).forEach(key => {
+    const slider = vrQuickMenu.slidersByKey[key];
+    if (!slider) return;
+    updateVrMenuSliderVisual(slider, Number(wallState[key]) || 0);
+  });
+}
+
 function clearVrQuickMenu() {
+  vrMenuDrag.active = false;
+  vrMenuDrag.controllerIndex = -1;
+  vrMenuDrag.key = null;
   if (!vrQuickMenu.group) {
-    vrQuickMenu.buttons = [];
+    vrQuickMenu.interactive = [];
+    vrQuickMenu.slidersByKey = {};
     vrQuickMenu.target = null;
     vrQuickMenu.open = false;
     return;
@@ -206,7 +337,8 @@ function clearVrQuickMenu() {
     });
   });
   vrQuickMenu.group = null;
-  vrQuickMenu.buttons = [];
+  vrQuickMenu.interactive = [];
+  vrQuickMenu.slidersByKey = {};
   vrQuickMenu.target = null;
   vrQuickMenu.open = false;
 }
@@ -227,7 +359,9 @@ function vrMenuTitleForTarget(target) {
 function applyVrMenuStateKey(key, nextValue) {
   const def = VR_MENU_SLIDERS[key];
   if (!def) return;
-  const clamped = THREE.MathUtils.clamp(Number(nextValue) || 0, def.min, def.max);
+  const clamped = quantizeVrSliderValue(def, nextValue);
+  const current = quantizeVrSliderValue(def, Number(wallState[key]) || def.min);
+  if (Math.abs(clamped - current) < Math.max(1e-6, (Number(def.step) || 0) * 0.25)) return;
 
   if (key === 'eAngle') {
     eSweepAnim.active = false;
@@ -246,21 +380,30 @@ function applyVrMenuStateKey(key, nextValue) {
   wallState[key] = (typeof clampWallStateValue === 'function') ? clampWallStateValue(key, clamped) : clamped;
   syncSlidersFromState();
   rebuild();
+  refreshVrQuickMenuValues();
 }
 
-function placeVrQuickMenuInFrontOfHead() {
+function placeVrQuickMenuDashboard() {
   if (!vrQuickMenu.group) return;
   const xrCam = renderer.xr.getCamera(camera);
   xrCam.updateMatrixWorld(true);
   const camPos = new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld);
   const fwd = new THREE.Vector3();
   xrCam.getWorldDirection(fwd);
+  fwd.y = 0;
   if (fwd.lengthSq() < 1e-8) fwd.set(0, 0, -1);
   else fwd.normalize();
-  const pos = camPos.clone().add(fwd.multiplyScalar(1.15));
-  pos.y -= 0.05;
+  const right = new THREE.Vector3().crossVectors(fwd, xrUp);
+  if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
+  else right.normalize();
+
+  const pos = camPos.clone()
+    .add(fwd.multiplyScalar(VR_MENU_PANEL_DISTANCE))
+    .add(right.multiplyScalar(VR_MENU_SIDE_OFFSET));
+  pos.y += VR_MENU_DOWN_OFFSET;
   vrQuickMenu.group.position.copy(pos);
-  vrQuickMenu.group.quaternion.copy(xrCam.quaternion);
+  const yaw = Math.atan2(fwd.x, fwd.z);
+  vrQuickMenu.group.rotation.set(0, yaw + Math.PI, 0);
 }
 
 function buildVrQuickMenu(target) {
@@ -269,18 +412,18 @@ function buildVrQuickMenu(target) {
   clearVrQuickMenu();
 
   const width = 1.26;
-  const rowH = 0.16;
+  const rowH = 0.13;
   const hasRows = keys.length > 0;
-  const height = hasRows ? (0.34 + keys.length * rowH) : 0.40;
+  const height = hasRows ? (0.25 + keys.length * rowH) : 0.34;
 
   const group = new THREE.Group();
   group.renderOrder = 2090;
   const bg = new THREE.Mesh(
     new THREE.PlaneGeometry(width, height),
     new THREE.MeshBasicMaterial({
-      color: 0x141923,
-      transparent: true,
-      opacity: 0.90,
+      color: VR_MENU_BG_COLOR,
+      transparent: false,
+      opacity: 1.0,
       side: THREE.DoubleSide,
       depthTest: false,
       depthWrite: false,
@@ -289,45 +432,114 @@ function buildVrQuickMenu(target) {
   bg.renderOrder = 2090;
   group.add(bg);
 
-  const title = makeVrMenuTextSprite(vrMenuTitleForTarget(target), 0.62, 0.12);
-  title.position.set(0, (height * 0.5) - 0.09, 0.004);
+  const title = makeVrTextPlane(vrMenuTitleForTarget(target), 0.70, 0.11, {
+    color: VR_MENU_TEXT_DARK_COLOR,
+    fontPx: 44,
+    fontWeight: '700',
+  });
+  title.position.set(0, (height * 0.5) - 0.07, 0.004);
   group.add(title);
 
-  const closeBtn = makeVrMenuButton('Close', 0.22, 0.10, 0x4e3240);
-  closeBtn.position.set((width * 0.5) - 0.15, (height * 0.5) - 0.09, 0.003);
+  const closeBtn = makeVrMenuButton('Close', 0.18, 0.07, 0xbac2ca);
+  closeBtn.position.set((width * 0.5) - 0.14, (height * 0.5) - 0.07, 0.003);
   closeBtn.userData.vrMenuAction = {type: 'close'};
   group.add(closeBtn);
 
-  const buttons = [closeBtn];
+  const interactive = [closeBtn];
+  const slidersByKey = {};
   if (hasRows) {
+    const trackW = 0.46;
+    const trackH = 0.036;
+    const trackCenterX = 0.14;
+    const leftLabelX = -0.46;
+    const valueX = 0.48;
     keys.forEach((key, idx) => {
       const def = VR_MENU_SLIDERS[key];
       if (!def) return;
-      const v = Number(wallState[key]) || 0;
-      const y = (height * 0.5) - 0.24 - idx * rowH;
+      const v = quantizeVrSliderValue(def, Number(wallState[key]) || def.min);
+      const y = (height * 0.5) - 0.17 - idx * rowH;
 
-      const label = makeVrMenuTextSprite(def.label, 0.40, 0.10);
-      label.position.set(-0.34, y, 0.004);
+      const label = makeVrTextPlane(def.label, 0.40, 0.08, {
+        color: VR_MENU_TEXT_DARK_COLOR,
+        fontPx: 36,
+        fontWeight: '700',
+        align: 'left',
+        padding: 14,
+      });
+      label.position.set(leftLabelX, y, 0.004);
       group.add(label);
 
-      const minusBtn = makeVrMenuButton('-', 0.12, 0.10, 0x3f2f35);
-      minusBtn.position.set(-0.05, y, 0.003);
-      minusBtn.userData.vrMenuAction = {type: 'adjust', key, delta: -def.step};
-      group.add(minusBtn);
-      buttons.push(minusBtn);
+      const track = new THREE.Mesh(
+        new THREE.PlaneGeometry(trackW, trackH),
+        new THREE.MeshBasicMaterial({
+          color: VR_MENU_TRACK_COLOR,
+          transparent: false,
+          opacity: 1,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+        })
+      );
+      track.renderOrder = 2120;
+      track.position.set(trackCenterX, y, 0.003);
+      track.userData.vrMenuAction = {type: 'sliderTrack', key};
+      group.add(track);
 
-      const value = makeVrMenuTextSprite(def.fmt(v), 0.28, 0.10);
-      value.position.set(0.19, y, 0.004);
-      group.add(value);
+      const fill = new THREE.Mesh(
+        new THREE.PlaneGeometry(trackW, trackH * 0.78),
+        new THREE.MeshBasicMaterial({
+          color: VR_MENU_FILL_COLOR,
+          transparent: false,
+          opacity: 1,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+        })
+      );
+      fill.renderOrder = 2121;
+      fill.position.set(trackCenterX - trackW * 0.5, y, 0.004);
+      fill.scale.x = 0.0001;
+      group.add(fill);
 
-      const plusBtn = makeVrMenuButton('+', 0.12, 0.10, 0x2f4a3c);
-      plusBtn.position.set(0.40, y, 0.003);
-      plusBtn.userData.vrMenuAction = {type: 'adjust', key, delta: def.step};
-      group.add(plusBtn);
-      buttons.push(plusBtn);
+      const knob = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.032, 0.075),
+        new THREE.MeshBasicMaterial({
+          color: VR_MENU_KNOB_COLOR,
+          transparent: false,
+          opacity: 1,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+        })
+      );
+      knob.renderOrder = 2122;
+      knob.position.set(trackCenterX - trackW * 0.5, y, 0.005);
+      knob.userData.vrMenuAction = {type: 'sliderTrack', key};
+      group.add(knob);
+
+      const valueLabel = makeVrTextPlane(def.fmt(v), 0.22, 0.08, {
+        color: VR_MENU_TEXT_DARK_COLOR,
+        fontPx: 34,
+        fontWeight: '700',
+        align: 'right',
+        padding: 14,
+      });
+      valueLabel.position.set(valueX, y, 0.004);
+      group.add(valueLabel);
+
+      const slider = {key, def, track, fill, knob, valueLabel, trackWidth: trackW, trackCenterX};
+      slidersByKey[key] = slider;
+      updateVrMenuSliderVisual(slider, v);
+
+      interactive.push(track);
+      interactive.push(knob);
     });
   } else {
-    const msg = makeVrMenuTextSprite('No adjustable sliders', 0.62, 0.11);
+    const msg = makeVrTextPlane('No adjustable sliders', 0.62, 0.10, {
+      color: VR_MENU_TEXT_DARK_COLOR,
+      fontPx: 34,
+      fontWeight: '700',
+    });
     msg.position.set(0, -0.02, 0.004);
     group.add(msg);
   }
@@ -335,9 +547,10 @@ function buildVrQuickMenu(target) {
   scene.add(group);
   vrQuickMenu.group = group;
   vrQuickMenu.target = target;
-  vrQuickMenu.buttons = buttons;
+  vrQuickMenu.interactive = interactive;
+  vrQuickMenu.slidersByKey = slidersByKey;
   vrQuickMenu.open = true;
-  placeVrQuickMenuInFrontOfHead();
+  placeVrQuickMenuDashboard();
   return true;
 }
 
@@ -347,26 +560,109 @@ function openVrQuickMenuForInfo(info) {
   return buildVrQuickMenu(target);
 }
 
-function getVrMenuButtonHit() {
-  if (!vrQuickMenu.open || !vrQuickMenu.buttons.length) return null;
+function getVrMenuInteractiveHit() {
+  if (!vrQuickMenu.open || !vrQuickMenu.interactive.length) return null;
   xrMenuRaycaster.far = XR_TELEPORT_MAX_DISTANCE;
   xrMenuRaycaster.set(xrRayOrigin, xrRayDir);
-  const hits = xrMenuRaycaster.intersectObjects(vrQuickMenu.buttons, false);
+  const hits = xrMenuRaycaster.intersectObjects(vrQuickMenu.interactive, false);
   return hits.length ? hits[0] : null;
 }
 
-function handleVrMenuSelect() {
-  const hit = getVrMenuButtonHit();
+function setVrMenuSliderFromHit(slider, hitPoint) {
+  if (!slider?.track || !hitPoint) return false;
+  const local = slider.track.worldToLocal(hitPoint.clone());
+  const t = THREE.MathUtils.clamp((local.x / slider.trackWidth) + 0.5, 0, 1);
+  const raw = slider.def.min + t * (slider.def.max - slider.def.min);
+  const next = quantizeVrSliderValue(slider.def, raw);
+  const curr = quantizeVrSliderValue(slider.def, Number(wallState[slider.key]) || slider.def.min);
+  if (Math.abs(next - curr) < 1e-6) return false;
+  applyVrMenuStateKey(slider.key, next);
+  updateVrMenuSliderVisual(slider, next);
+  return true;
+}
+
+function beginVrMenuDrag(controllerIndex, key, hitPoint=null) {
+  const slider = vrQuickMenu.slidersByKey?.[key];
+  if (!slider) return false;
+  vrMenuDrag.active = true;
+  vrMenuDrag.controllerIndex = controllerIndex;
+  vrMenuDrag.key = key;
+  if (hitPoint) setVrMenuSliderFromHit(slider, hitPoint);
+  return true;
+}
+
+function endVrMenuDrag(controllerIndex=null) {
+  if (!vrMenuDrag.active) return false;
+  if (Number.isInteger(controllerIndex) && vrMenuDrag.controllerIndex !== controllerIndex) return false;
+  vrMenuDrag.active = false;
+  vrMenuDrag.controllerIndex = -1;
+  vrMenuDrag.key = null;
+  return true;
+}
+
+function updateVrMenuDrag() {
+  if (!vrMenuDrag.active || !vrQuickMenu.open) return;
+  const state = xrControllers.find(s => s.index === vrMenuDrag.controllerIndex);
+  if (!state?.connected || !state.controller) {
+    endVrMenuDrag();
+    return;
+  }
+  const slider = vrQuickMenu.slidersByKey?.[vrMenuDrag.key];
+  if (!slider) {
+    endVrMenuDrag();
+    return;
+  }
+  if (!readControllerWorldRay(state.controller)) return;
+  xrMenuRaycaster.far = XR_TELEPORT_MAX_DISTANCE;
+  xrMenuRaycaster.set(xrRayOrigin, xrRayDir);
+  const hits = xrMenuRaycaster.intersectObject(slider.track, false);
+  if (!hits.length) return;
+  setVrMenuSliderFromHit(slider, hits[0].point);
+}
+
+function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=false) {
+  const hit = hitOverride || getVrMenuInteractiveHit();
   const action = hit?.object?.userData?.vrMenuAction;
   if (!action) return false;
   if (action.type === 'close') {
     clearVrQuickMenu();
     return true;
   }
-  if (action.type === 'adjust' && action.key) {
-    const curr = Number(wallState[action.key]) || 0;
-    applyVrMenuStateKey(action.key, curr + (Number(action.delta) || 0));
-    if (vrQuickMenu.target) buildVrQuickMenu(vrQuickMenu.target);
+  if (action.type === 'sliderTrack' && action.key) {
+    if (preferDrag && Number.isInteger(controllerIndex)) {
+      return beginVrMenuDrag(controllerIndex, action.key, hit?.point || null);
+    }
+    const slider = vrQuickMenu.slidersByKey?.[action.key];
+    if (!slider || !hit?.point) return false;
+    return setVrMenuSliderFromHit(slider, hit.point);
+  }
+  return false;
+}
+
+function onVrControllerSelectStart(event) {
+  if (!xrSessionActive) return;
+  const state = xrControllers.find(s => s.controller === event?.target);
+  if (state) xrActiveControllerIndex = state.index;
+  const controller = state?.controller || event?.target;
+  if (!controller || !readControllerWorldRay(controller)) return;
+  if (!vrQuickMenu.open) return;
+  const hit = getVrMenuInteractiveHit();
+  if (handleVrMenuSelect(hit, state?.index ?? null, true)) {
+    event?.stopPropagation?.();
+  }
+}
+
+function onVrControllerSelectCancel(event) {
+  const state = xrControllers.find(s => s.controller === event?.target);
+  if (!state) return;
+  endVrMenuDrag(state.index);
+}
+
+function cancelVrMenuDragIfInactive() {
+  if (!vrMenuDrag.active) return;
+  const state = xrControllers.find(s => s.index === vrMenuDrag.controllerIndex);
+  if (!state?.connected) {
+    endVrMenuDrag();
     return true;
   }
   return false;
@@ -494,6 +790,62 @@ function applyControllerVisualOpacity(root, alpha=XR_CONTROLLER_VISUAL_OPACITY) 
   return foundMesh;
 }
 
+function getXrPoseEyeHeight(xrCam) {
+  const poseY = Math.abs(Number(xrCam?.position?.y) || 0);
+  if (poseY > 0.2) return THREE.MathUtils.clamp(poseY, XR_MIN_EYE_HEIGHT, XR_MAX_EYE_HEIGHT);
+  return XR_FLOOR_EYE_HEIGHT;
+}
+
+function loadQuestControllerModelTemplate(side) {
+  if (side !== 'left' && side !== 'right') return Promise.resolve(null);
+  if (!xrControllerGltfLoader) return Promise.resolve(null);
+  if (xrQuestControllerModelTemplates[side]) return Promise.resolve(xrQuestControllerModelTemplates[side]);
+  if (xrQuestControllerModelPromises[side]) return xrQuestControllerModelPromises[side];
+
+  const url = XR_QUEST_CONTROLLER_URLS[side];
+  xrQuestControllerModelPromises[side] = new Promise(resolve => {
+    xrControllerGltfLoader.load(
+      url,
+      gltf => {
+        xrQuestControllerModelTemplates[side] = gltf?.scene || null;
+        resolve(xrQuestControllerModelTemplates[side]);
+      },
+      undefined,
+      err => {
+        console.warn(`Quest controller model load failed (${side}):`, err);
+        resolve(null);
+      }
+    );
+  });
+  return xrQuestControllerModelPromises[side];
+}
+
+function ensureQuestControllerModel(state) {
+  if (!state?.controllerGrip || !xrControllerGltfLoader) return;
+  const side = (state.handedness === 'left' || state.handedness === 'right') ? state.handedness : null;
+  if (!side) return;
+  if (state.modelKind === 'quest' && state.modelSide === side) return;
+  if (state.loadingModelSide === side) return;
+
+  state.loadingModelSide = side;
+  loadQuestControllerModelTemplate(side).then(template => {
+    state.loadingModelSide = null;
+    if (!template || !state.connected || !state.controllerGrip) return;
+    if (state.modelKind === 'quest' && state.modelSide === side) return;
+
+    const clone = template.clone(true);
+    clone.name = `quest-controller-${side}`;
+    if (state.controllerVisual?.parent === state.controllerGrip) {
+      state.controllerGrip.remove(state.controllerVisual);
+    }
+    state.controllerVisual = clone;
+    state.modelKind = 'quest';
+    state.modelSide = side;
+    state.visualReady = false;
+    state.controllerGrip.add(clone);
+  });
+}
+
 function makeFallbackControllerVisual() {
   const g = new THREE.Group();
   const shell = new THREE.Mesh(
@@ -553,9 +905,13 @@ function updateVrControllerConnection(state, connected, data=null) {
   state.stickPressedLast = false;
   state.anyPressedLast = false;
   state.visualReady = false;
+  state.loadingModelSide = null;
   if (state.rayLine) state.rayLine.visible = xrSessionActive && state.connected;
   if (state.controllerGrip) state.controllerGrip.visible = xrSessionActive && state.connected;
-  if (state.connected) xrActiveControllerIndex = state.index;
+  if (state.connected) {
+    xrActiveControllerIndex = state.index;
+    ensureQuestControllerModel(state);
+  }
 }
 
 function ensureVrControllers() {
@@ -580,6 +936,9 @@ function ensureVrControllers() {
       controller,
       controllerGrip,
       controllerVisual,
+      modelKind: xrControllerModelFactory ? 'factory' : 'fallback',
+      modelSide: null,
+      loadingModelSide: null,
       visualReady: false,
       rayLine,
       connected: false,
@@ -594,9 +953,12 @@ function ensureVrControllers() {
       updateVrControllerConnection(state, true, ev?.data || null);
     });
     controller.addEventListener('disconnected', () => {
+      endVrMenuDrag(state.index);
       updateVrControllerConnection(state, false, null);
     });
+    controller.addEventListener('selectstart', onVrControllerSelectStart);
     controller.addEventListener('selectend', onVrControllerSelectEnd);
+    controller.addEventListener('selectcancel', onVrControllerSelectCancel);
     xrRig.add(controller);
     xrRig.add(controllerGrip);
     xrControllers.push(state);
@@ -644,8 +1006,11 @@ function teleportVrTo(targetPoint) {
   xrRig.position.x += targetPoint.x - xrHeadWorld.x;
   xrRig.position.z += targetPoint.z - xrHeadWorld.z;
   if (xrMoveMode === XR_MOVE_MODE.GROUNDED) {
-    xrRig.position.y += floorY - xrGroundFloorY;
+    const eyeH = getXrPoseEyeHeight(xrCam);
+    const desiredHeadY = floorY + eyeH;
+    xrRig.position.y += desiredHeadY - xrHeadWorld.y;
     xrGroundFloorY = floorY;
+    xrNeedsGroundSnap = false;
   }
   targetX = xrRig.position.x;
   targetY = xrRig.position.y;
@@ -682,9 +1047,14 @@ function updateGroundFloorFromHead(xrCam, sticky=true) {
   xrCam.updateMatrixWorld(true);
   xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
   const nextFloorY = sticky ? getStickyGroundFloorY(xrHeadWorld.x, xrHeadWorld.z) : getActiveFloorY(xrHeadWorld.x, xrHeadWorld.z);
-  if (Math.abs(nextFloorY - xrGroundFloorY) > 1e-5) {
-    xrRig.position.y += nextFloorY - xrGroundFloorY;
+  const floorChanged = Math.abs(nextFloorY - xrGroundFloorY) > 1e-5;
+  if (floorChanged || xrNeedsGroundSnap) {
+    const eyeH = getXrPoseEyeHeight(xrCam);
+    const desiredHeadY = nextFloorY + eyeH;
+    const headDelta = desiredHeadY - xrHeadWorld.y;
+    if (Math.abs(headDelta) > 1e-5) xrRig.position.y += headDelta;
     xrGroundFloorY = nextFloorY;
+    xrNeedsGroundSnap = false;
   }
   return xrGroundFloorY;
 }
@@ -715,12 +1085,8 @@ function toggleVrMoveMode() {
   xrMoveMode = (xrMoveMode === XR_MOVE_MODE.GROUNDED) ? XR_MOVE_MODE.FLY : XR_MOVE_MODE.GROUNDED;
   if (xrMoveMode !== XR_MOVE_MODE.GROUNDED || !xrSessionActive) return;
   const xrCam = renderer.xr.getCamera(camera);
-  const floorY = updateGroundFloorFromHead(xrCam, false);
-  xrCam.updateMatrixWorld(true);
-  xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
-  const desiredHeadY = floorY + XR_FLOOR_EYE_HEIGHT;
-  xrRig.position.y += desiredHeadY - xrHeadWorld.y;
-  xrGroundFloorY = floorY;
+  xrNeedsGroundSnap = true;
+  updateGroundFloorFromHead(xrCam, false);
 }
 
 function updateVrMoveModeToggle() {
@@ -733,22 +1099,6 @@ function updateVrMoveModeToggle() {
   if (toggleRequested) toggleVrMoveMode();
 }
 
-function toggleEWallSweep() {
-  const curr = THREE.MathUtils.clamp(Number(wallState.eAngle) || 0, eSweepAnim.minDeg, eSweepAnim.maxDeg);
-  if (curr >= eSweepAnim.maxDeg - 0.05) eSweepAnim.dir = -1;
-  else if (curr <= eSweepAnim.minDeg + 0.05) eSweepAnim.dir = 1;
-  eSweepAnim.active = !eSweepAnim.active;
-  if (!eSweepAnim.active) rebuild();
-}
-
-function toggleTrainingRigOpenClose() {
-  const basis = Number.isFinite(rigToggleAnim.targetDeg)
-    ? rigToggleAnim.targetDeg
-    : THREE.MathUtils.clamp(Number(wallState.rigOpen) || 0, 0, 180);
-  rigToggleAnim.targetDeg = basis >= 90 ? 0 : 180;
-  rigToggleAnim.lastRebuildDeg = NaN;
-}
-
 function handleVrInteractiveClick(hit) {
   const info = hit?.object?.userData?.sectionInfo;
   if (!info) return false;
@@ -759,9 +1109,15 @@ function onVrControllerSelectEnd(event) {
   if (!xrSessionActive) return;
   const state = xrControllers.find(s => s.controller === event?.target);
   if (state) xrActiveControllerIndex = state.index;
+  if (state && endVrMenuDrag(state.index)) return;
   const controller = state?.controller || event?.target;
   if (!controller || !readControllerWorldRay(controller)) return;
-  if (handleVrMenuSelect()) return;
+  if (vrQuickMenu.open) {
+    const menuHit = getVrMenuInteractiveHit();
+    if (handleVrMenuSelect(menuHit, state?.index ?? null, false)) return;
+    // While a menu is open, ignore world interactions to avoid accidental teleports.
+    return;
+  }
   const interactiveHit = getVrInteractiveHit();
   if (handleVrInteractiveClick(interactiveHit)) return;
   const maxFloorDist = interactiveHit ? Math.max(0.06, interactiveHit.distance - 0.02) : XR_TELEPORT_MAX_DISTANCE;
@@ -789,11 +1145,12 @@ function updateVrControllerPointers() {
     }
     if (state.controllerGrip) {
       state.controllerGrip.visible = true;
+      ensureQuestControllerModel(state);
       if (!state.visualReady && state.controllerVisual) {
         state.visualReady = applyControllerVisualOpacity(state.controllerVisual);
       }
     }
-    const menuHit = getVrMenuButtonHit();
+    const menuHit = getVrMenuInteractiveHit();
     const interactiveHit = menuHit ? null : getVrInteractiveHit();
     const maxFloorDist = (menuHit || interactiveHit)
       ? Math.max(0.06, (menuHit || interactiveHit).distance - 0.02)
@@ -857,7 +1214,7 @@ function beginVrSession() {
   phi = Math.PI * 0.5;
   radius = 0.001;
   targetX = startX;
-  targetY = startFloorY + XR_FLOOR_EYE_HEIGHT;
+  targetY = startFloorY;
   targetZ = startZ;
   xrRig.position.set(targetX, targetY, targetZ);
   xrRig.rotation.set(0, 0, 0);
@@ -865,6 +1222,7 @@ function beginVrSession() {
   camera.rotation.set(0, 0, 0);
   xrMoveMode = XR_MOVE_MODE.GROUNDED;
   xrGroundFloorY = startFloorY;
+  xrNeedsGroundSnap = true;
   xrNeedsYawAlignment = !!xrEntryForward;
   xrActiveControllerIndex = 0;
   xrEntryStartPos = null;
@@ -901,6 +1259,7 @@ function endVrSession() {
   rigToggleAnim.lastRebuildDeg = NaN;
   xrMoveMode = XR_MOVE_MODE.GROUNDED;
   xrGroundFloorY = 0;
+  xrNeedsGroundSnap = false;
   xrNeedsYawAlignment = false;
   xrActiveControllerIndex = 0;
   xrEntryStartPos = null;
@@ -1742,6 +2101,8 @@ function animate(now) {
 
   if (xrSessionActive) {
     updateVrLocomotion(dt);
+    updateVrMenuDrag();
+    cancelVrMenuDragIfInactive();
     updateVrControllerPointers();
   } else {
     updateIntroAnimation(ts);
