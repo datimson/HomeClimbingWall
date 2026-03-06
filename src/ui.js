@@ -211,8 +211,8 @@ const VR_MENU_TRACK_HOVER_COLOR = 0xb8a17c;
 const VR_MENU_FILL_HOVER_COLOR = 0x8f7450;
 const VR_MENU_KNOB_HOVER_COLOR = 0xf0cf98;
 const VR_MENU_CURSOR_COLOR = 0xffffff;
-const VR_MENU_CURSOR_RADIUS = 0.016;
-const VR_MENU_CURSOR_OFFSET = 0.012;
+const VR_MENU_CURSOR_RADIUS = 0.004;
+const VR_MENU_CURSOR_OFFSET = 0.030;
 const VR_MENU_GRAB_RADIUS_SPEED = 1.20;
 const VR_MENU_DISTANCE = 0.52;
 const VR_MENU_SIDE_OFFSET = 0.18;
@@ -248,6 +248,9 @@ const vrMenuMove = {
 const vrMenuMoveWorldPoint = new THREE.Vector3();
 const vrMenuMoveHeadPos = new THREE.Vector3();
 const vrMenuMoveHoriz = new THREE.Vector3();
+const vrMenuCursorNormal = new THREE.Vector3();
+const vrMenuCursorToController = new THREE.Vector3();
+const vrMenuCursorNormalMatrix = new THREE.Matrix3();
 
 function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
   const canvas = document.createElement('canvas');
@@ -319,7 +322,7 @@ function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
   m.renderOrder = 2100;
   const txt = makeVrTextPlane(label, width * 0.82, height * 0.60, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 56,
+    fontPx: 62,
     fontWeight: '700',
   });
   txt.position.z = 0.004;
@@ -591,7 +594,7 @@ function buildVrQuickMenu(target) {
   const titleWidth = Math.max(0.22, innerWidth - closeW - closeGap);
   const title = makeVrTextPlane(vrMenuTitleForTarget(target), titleWidth, 0.09, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 38,
+    fontPx: 42,
     fontWeight: '700',
     align: 'left',
     padding: 20,
@@ -624,7 +627,7 @@ function buildVrQuickMenu(target) {
 
       const label = makeVrTextPlane(def.label, labelW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 36,
+        fontPx: 40,
         fontWeight: '700',
         align: 'left',
         padding: 18,
@@ -682,7 +685,7 @@ function buildVrQuickMenu(target) {
 
       const valueLabel = makeVrTextPlane(def.fmt(v), valueW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 35,
+        fontPx: 39,
         fontWeight: '700',
         align: 'right',
         padding: 18,
@@ -700,7 +703,7 @@ function buildVrQuickMenu(target) {
   } else {
     const msg = makeVrTextPlane('No adjustable sliders', 0.58, 0.10, {
       color: VR_MENU_TEXT_DARK_COLOR,
-      fontPx: 44,
+      fontPx: 48,
       fontWeight: '700',
     });
     msg.position.set(0, -0.02, 0.004);
@@ -1459,7 +1462,16 @@ function updateVrControllerPointers() {
     if (state.menuCursor) {
       if (menuHit && vrQuickMenu.open && vrQuickMenu.group) {
         state.menuCursor.visible = true;
-        state.menuCursor.position.copy(menuHit.point).addScaledVector(xrRayDir, -VR_MENU_CURSOR_OFFSET);
+        if (menuHit.face && menuHit.object?.matrixWorld) {
+          vrMenuCursorNormal.copy(menuHit.face.normal);
+          vrMenuCursorNormalMatrix.getNormalMatrix(menuHit.object.matrixWorld);
+          vrMenuCursorNormal.applyMatrix3(vrMenuCursorNormalMatrix).normalize();
+          vrMenuCursorToController.copy(xrRayOrigin).sub(menuHit.point);
+          if (vrMenuCursorNormal.dot(vrMenuCursorToController) < 0) vrMenuCursorNormal.negate();
+          state.menuCursor.position.copy(menuHit.point).addScaledVector(vrMenuCursorNormal, VR_MENU_CURSOR_OFFSET);
+        } else {
+          state.menuCursor.position.copy(menuHit.point).addScaledVector(xrRayDir, -VR_MENU_CURSOR_OFFSET);
+        }
         state.menuCursor.quaternion.copy(vrQuickMenu.group.quaternion);
       } else {
         state.menuCursor.visible = false;
