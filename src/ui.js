@@ -205,7 +205,7 @@ const VR_MENU_SLIDERS = Object.freeze({
   eAngle: {label: 'E Angle', step: 1, min: -5, max: 60, fmt: v => `${Math.round(v)}°`},
   f1Angle: {label: 'F1 Angle', step: 1, min: 0, max: 40, fmt: v => `${Math.round(v)}°`},
   f1Height: {label: 'F1 Height', step: 0.05, min: 2.0, max: 2.7, fmt: v => `${v.toFixed(2)}m`},
-  f1Width: {label: 'F1 Width', step: 0.05, min: 0.1, max: 1.0, fmt: v => `${v.toFixed(2)}m`},
+  f1Width: {label: 'F1 Width', step: 0.05, min: 0.1, max: WALL_STATE_LIMITS.f1Width[1], fmt: v => `${v.toFixed(2)}m`},
   f2Angle: {label: 'F2 Angle', step: 1, min: 0, max: 75, fmt: v => `${Math.round(v)}°`},
   f2WidthTop: {label: 'F2 Width', step: 0.05, min: 0.3, max: W, fmt: v => `${v.toFixed(2)}m`},
   rigOpen: {label: 'Rig Open', step: 5, min: 0, max: 180, fmt: v => `${Math.round(v)}°`},
@@ -2539,7 +2539,7 @@ function syncDynamicSliderBounds() {
     if (Math.abs(clamped - v) > 1e-6) el.value = String(clamped);
   };
 
-  const dynamicKeys = ['aWidth', 'd1Height', 'f1Height', 'f2WidthTop'];
+  const dynamicKeys = ['aWidth', 'd1Height', 'f1Height', 'f1Width', 'f2WidthTop'];
   dynamicKeys.forEach(key => {
     const current = Number(wallState[key]);
     if (!Number.isFinite(current)) return;
@@ -2549,11 +2549,13 @@ function syncDynamicSliderBounds() {
   if (VR_MENU_SLIDERS?.aWidth) VR_MENU_SLIDERS.aWidth.max = WALL_STATE_LIMITS.aWidth[1];
   if (VR_MENU_SLIDERS?.d1Height) VR_MENU_SLIDERS.d1Height.max = WALL_STATE_LIMITS.d1Height[1];
   if (VR_MENU_SLIDERS?.f1Height) VR_MENU_SLIDERS.f1Height.max = WALL_STATE_LIMITS.f1Height[1];
+  if (VR_MENU_SLIDERS?.f1Width) VR_MENU_SLIDERS.f1Width.max = WALL_STATE_LIMITS.f1Width[1];
   if (VR_MENU_SLIDERS?.f2WidthTop) VR_MENU_SLIDERS.f2WidthTop.max = WALL_STATE_LIMITS.f2WidthTop[1];
 
   clampInputToRange('aWidth', WALL_STATE_LIMITS.aWidth[0], WALL_STATE_LIMITS.aWidth[1]);
   clampInputToRange('d1Height', WALL_STATE_LIMITS.d1Height[0], WALL_STATE_LIMITS.d1Height[1]);
   clampInputToRange('f1Height', WALL_STATE_LIMITS.f1Height[0], WALL_STATE_LIMITS.f1Height[1]);
+  clampInputToRange('f1Width', WALL_STATE_LIMITS.f1Width[0], WALL_STATE_LIMITS.f1Width[1]);
   clampInputToRange('f2WidthTop', WALL_STATE_LIMITS.f2WidthTop[0], WALL_STATE_LIMITS.f2WidthTop[1]);
 }
 

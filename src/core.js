@@ -192,7 +192,7 @@ const WALL_STATE_LIMITS = {
   cAngle: [0, 60], cWidth: [0.3, 2.5],
   dAngle: [0, 60], d1Height: [0.5, 2.7], d2Angle: [0, 75],
   eAngle: [-5, 60],
-  f1Angle: [0, 40], f1Height: [2.0, 2.7], f1Width: [0.1, 1.0],
+  f1Angle: [0, 40], f1Height: [2.0, 2.7], f1Width: [0.1, 2.0],
   f2Angle: [0, 75], f2WidthTop: [0.3, W],
   rigOpen: [0, 180],
 };
@@ -300,6 +300,10 @@ function normalizeWallGeometryState(seed, source) {
 
 function refreshWallStateLimitsForGeometry() {
   WALL_STATE_LIMITS.f2WidthTop[1] = Math.max(WALL_STATE_LIMITS.f2WidthTop[0], W);
+  WALL_STATE_LIMITS.f1Width[1] = Math.max(
+    WALL_STATE_LIMITS.f1Width[0],
+    Math.min(2.0, W)
+  );
   WALL_STATE_LIMITS.aWidth[1] = Math.max(WALL_STATE_LIMITS.aWidth[0], D);
   const hAvail = Math.max(0.6, H_fixed - KICK - 0.1);
   WALL_STATE_LIMITS.d1Height[1] = Math.max(WALL_STATE_LIMITS.d1Height[0], hAvail);
