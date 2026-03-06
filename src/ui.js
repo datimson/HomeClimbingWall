@@ -207,12 +207,14 @@ const VR_MENU_TEXT_DARK_COLOR = '#21262b';
 const VR_MENU_TRACK_COLOR = 0x9aa5b0;
 const VR_MENU_FILL_COLOR = 0x5f7183;
 const VR_MENU_KNOB_COLOR = 0x2f3338;
+const VR_MENU_CLOSE_COLOR = 0xbac2ca;
+const VR_MENU_CLOSE_HOVER_COLOR = 0x90a4b9;
 const VR_MENU_TRACK_HOVER_COLOR = 0xb8a17c;
 const VR_MENU_FILL_HOVER_COLOR = 0x8f7450;
 const VR_MENU_KNOB_HOVER_COLOR = 0xf0cf98;
 const VR_MENU_CURSOR_COLOR = 0x000000;
 const VR_MENU_CURSOR_RADIUS = 0.003;
-const VR_MENU_CURSOR_OFFSET = 0.012;
+const VR_MENU_CURSOR_OFFSET = 0.018;
 const VR_MENU_GRAB_RADIUS_SPEED = 1.20;
 const VR_MENU_DISTANCE = 0.52;
 const VR_MENU_SIDE_OFFSET = 0.18;
@@ -227,9 +229,11 @@ const VR_MENU_RENDER_ORDER_BUMP = 100000;
 const vrQuickMenu = {
   group: null,
   target: null,
+  closeBtn: null,
   interactive: [],
   slidersByKey: {},
   hoveredKey: null,
+  closeHovered: false,
   open: false,
 };
 const vrMenuDrag = {
@@ -248,9 +252,7 @@ const vrMenuMove = {
 const vrMenuMoveWorldPoint = new THREE.Vector3();
 const vrMenuMoveHeadPos = new THREE.Vector3();
 const vrMenuMoveHoriz = new THREE.Vector3();
-const vrMenuCursorNormal = new THREE.Vector3();
-const vrMenuCursorToController = new THREE.Vector3();
-const vrMenuCursorNormalMatrix = new THREE.Matrix3();
+const vrMenuCursorToHead = new THREE.Vector3();
 
 function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
   const canvas = document.createElement('canvas');
@@ -403,6 +405,15 @@ function setVrMenuSliderHoverKey(key=null) {
   vrQuickMenu.hoveredKey = hoverKey;
 }
 
+function setVrMenuCloseHover(active=false) {
+  const hovered = !!active;
+  if (vrQuickMenu.closeHovered === hovered) return;
+  vrQuickMenu.closeHovered = hovered;
+  const closeBtn = vrQuickMenu.closeBtn;
+  const mat = closeBtn?.material;
+  if (mat?.color) mat.color.setHex(hovered ? VR_MENU_CLOSE_HOVER_COLOR : VR_MENU_CLOSE_COLOR);
+}
+
 function quantizeVrSliderValue(def, value) {
   const min = Number(def?.min) || 0;
   const max = Number(def?.max) || min;
@@ -455,9 +466,11 @@ function clearVrQuickMenu() {
   vrMenuMove.orbitHeightOffset = VR_MENU_DOWN_OFFSET;
   vrMenuMove.grabPointY = 0;
   if (!vrQuickMenu.group) {
+    vrQuickMenu.closeBtn = null;
     vrQuickMenu.interactive = [];
     vrQuickMenu.slidersByKey = {};
     vrQuickMenu.hoveredKey = null;
+    vrQuickMenu.closeHovered = false;
     vrQuickMenu.target = null;
     vrQuickMenu.open = false;
     return;
@@ -474,9 +487,11 @@ function clearVrQuickMenu() {
     });
   });
   vrQuickMenu.group = null;
+  vrQuickMenu.closeBtn = null;
   vrQuickMenu.interactive = [];
   vrQuickMenu.slidersByKey = {};
   vrQuickMenu.hoveredKey = null;
+  vrQuickMenu.closeHovered = false;
   vrQuickMenu.target = null;
   vrQuickMenu.open = false;
 }
@@ -602,7 +617,7 @@ function buildVrQuickMenu(target) {
   title.position.set(innerLeft + (titleWidth * 0.5), halfH - VR_MENU_PADDING_Y - 0.02, 0.004);
   group.add(title);
 
-  const closeBtn = makeVrMenuButton('Close', closeW, closeH, 0xbac2ca);
+  const closeBtn = makeVrMenuButton('Close', closeW, closeH, VR_MENU_CLOSE_COLOR);
   closeBtn.position.set(innerRight - (closeW * 0.5), halfH - VR_MENU_PADDING_Y - 0.02, 0.003);
   closeBtn.userData.vrMenuAction = {type: 'close'};
   group.add(closeBtn);
@@ -713,11 +728,14 @@ function buildVrQuickMenu(target) {
   scene.add(group);
   vrQuickMenu.group = group;
   vrQuickMenu.target = target;
+  vrQuickMenu.closeBtn = closeBtn;
   vrQuickMenu.interactive = interactive;
   vrQuickMenu.slidersByKey = slidersByKey;
   vrQuickMenu.hoveredKey = null;
+  vrQuickMenu.closeHovered = false;
   vrQuickMenu.open = true;
   setVrMenuSliderHoverKey(null);
+  setVrMenuCloseHover(false);
   enforceVrMenuOverlay(group);
   placeVrQuickMenuDashboard();
   return true;
@@ -1429,12 +1447,17 @@ function updateVrControllerPointers() {
       if (state?.menuCursor) state.menuCursor.visible = false;
     });
     setVrMenuSliderHoverKey(null);
+    setVrMenuCloseHover(false);
     return;
   }
 
   updateActiveControllerFromButtons();
+  const xrCam = renderer.xr.getCamera(camera);
+  if (xrCam) xrCam.updateMatrixWorld(true);
   let hoveredSliderKey = null;
   let hoveredFromActive = false;
+  let closeHovered = false;
+  let closeHoveredFromActive = false;
 
   xrControllers.forEach(state => {
     if (!state?.controller || !state?.rayLine || !state.connected || !readControllerWorldRay(state.controller)) {
@@ -1462,13 +1485,12 @@ function updateVrControllerPointers() {
     if (state.menuCursor) {
       if (menuHit && vrQuickMenu.open && vrQuickMenu.group) {
         state.menuCursor.visible = true;
-        if (menuHit.face && menuHit.object?.matrixWorld) {
-          vrMenuCursorNormal.copy(menuHit.face.normal);
-          vrMenuCursorNormalMatrix.getNormalMatrix(menuHit.object.matrixWorld);
-          vrMenuCursorNormal.applyMatrix3(vrMenuCursorNormalMatrix).normalize();
-          vrMenuCursorToController.copy(xrRayOrigin).sub(menuHit.point);
-          if (vrMenuCursorNormal.dot(vrMenuCursorToController) < 0) vrMenuCursorNormal.negate();
-          state.menuCursor.position.copy(menuHit.point).addScaledVector(vrMenuCursorNormal, VR_MENU_CURSOR_OFFSET);
+        if (xrCam) {
+          vrMenuMoveHeadPos.setFromMatrixPosition(xrCam.matrixWorld);
+          vrMenuCursorToHead.copy(vrMenuMoveHeadPos).sub(menuHit.point);
+          if (vrMenuCursorToHead.lengthSq() < 1e-10) vrMenuCursorToHead.copy(xrRayDir).multiplyScalar(-1);
+          else vrMenuCursorToHead.normalize();
+          state.menuCursor.position.copy(menuHit.point).addScaledVector(vrMenuCursorToHead, VR_MENU_CURSOR_OFFSET);
         } else {
           state.menuCursor.position.copy(menuHit.point).addScaledVector(xrRayDir, -VR_MENU_CURSOR_OFFSET);
         }
@@ -1483,6 +1505,11 @@ function updateVrControllerPointers() {
       if (!hoveredSliderKey || (state.index === xrActiveControllerIndex && !hoveredFromActive)) {
         hoveredSliderKey = menuAction.key;
         hoveredFromActive = state.index === xrActiveControllerIndex;
+      }
+    } else if (menuAction?.type === 'close') {
+      if (!closeHovered || (state.index === xrActiveControllerIndex && !closeHoveredFromActive)) {
+        closeHovered = true;
+        closeHoveredFromActive = state.index === xrActiveControllerIndex;
       }
     }
 
@@ -1502,6 +1529,7 @@ function updateVrControllerPointers() {
   });
 
   setVrMenuSliderHoverKey(hoveredSliderKey);
+  setVrMenuCloseHover(closeHovered);
 
   const activeState = xrControllers.find(state =>
     state &&
