@@ -65,7 +65,8 @@ const SITE_LAYOUT = Object.freeze({
   wallClearanceToFenceZ: 0.80,      // target wall clearance to fence on z side
 
   houseBackOffsetX: 6.70,           // house roof footprint offset from back boundary
-  houseSideOffsetZ: 2.00,           // house roof footprint offset from side boundary
+  // Keeps nearest house wall 2.0m from side fence line (excluding roof/eave overhang).
+  houseSideOffsetZ: 0.70,           // house roof footprint offset from side boundary
   houseLengthZ: 16.40,              // roof footprint length along z
   houseDepthX: 9.00,                // roof footprint depth along x
   houseWallHeight: 2.40,            // wall height to roof start

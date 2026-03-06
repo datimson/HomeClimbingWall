@@ -254,6 +254,7 @@ const VR_MENU_ROW_HEIGHT = 0.095;
 const VR_MENU_PADDING_X = 0.08;
 const VR_MENU_PADDING_Y = 0.05;
 const VR_MENU_RENDER_ORDER_BUMP = 100000;
+const XR_MENU_WORLD_CLICK_SUPPRESS_MS = 260;
 
 const vrQuickMenu = {
   group: null,
@@ -994,6 +995,19 @@ function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=f
   return false;
 }
 
+function suppressVrWorldSelectOnce(state) {
+  if (!state) return;
+  state.suppressWorldSelectUntil = performance.now() + XR_MENU_WORLD_CLICK_SUPPRESS_MS;
+}
+
+function consumeVrWorldSelectSuppression(state) {
+  if (!state) return false;
+  const until = Number(state.suppressWorldSelectUntil) || 0;
+  if (until <= 0) return false;
+  state.suppressWorldSelectUntil = 0;
+  return performance.now() <= until;
+}
+
 function onVrControllerSelectStart(event) {
   if (!xrSessionActive) return;
   const state = xrControllers.find(s => s.controller === event?.target);
@@ -1003,6 +1017,7 @@ function onVrControllerSelectStart(event) {
   if (!vrQuickMenu.open) return;
   const hit = getVrMenuInteractiveHit();
   if (handleVrMenuSelect(hit, state?.index ?? null, true)) {
+    suppressVrWorldSelectOnce(state);
     event?.stopPropagation?.();
   }
 }
@@ -1010,6 +1025,7 @@ function onVrControllerSelectStart(event) {
 function onVrControllerSelectCancel(event) {
   const state = xrControllers.find(s => s.controller === event?.target);
   if (!state) return;
+  state.suppressWorldSelectUntil = 0;
   endVrMenuDrag(state.index);
 }
 
@@ -1343,6 +1359,7 @@ function updateVrControllerConnection(state, connected, data=null) {
   state.stickPressedLast = false;
   state.menuPressedLast = false;
   state.anyPressedLast = false;
+  state.suppressWorldSelectUntil = 0;
   state.visualReady = false;
   state.loadingModelSide = null;
   if (state.menuCursor) state.menuCursor.visible = false;
@@ -1392,6 +1409,7 @@ function ensureVrControllers() {
       stickPressedLast: false,
       menuPressedLast: false,
       anyPressedLast: false,
+      suppressWorldSelectUntil: 0,
     };
     controller.addEventListener('connected', ev => {
       updateVrControllerConnection(state, true, ev?.data || null);
@@ -1576,7 +1594,11 @@ function onVrControllerSelectEnd(event) {
   const state = xrControllers.find(s => s.controller === event?.target);
   if (state) xrActiveControllerIndex = state.index;
   if (state && vrMenuMove.active && vrMenuMove.controllerIndex === state.index) return;
-  if (state && endVrMenuDrag(state.index)) return;
+  if (state && endVrMenuDrag(state.index)) {
+    state.suppressWorldSelectUntil = 0;
+    return;
+  }
+  if (state && consumeVrWorldSelectSuppression(state)) return;
   const controller = state?.controller || event?.target;
   if (!controller || !readControllerWorldRay(controller)) return;
   if (vrQuickMenu.open) {
