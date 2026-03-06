@@ -6,11 +6,20 @@ renderer.setPixelRatio(window.devicePixelRatio);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.localClippingEnabled = true;
-renderer.setClearColor(0x111111);
+renderer.setClearColor(0xffffff);
 renderer.xr.enabled = true;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x111111, 20, 40);
+scene.fog = new THREE.Fog(0xffffff, 20, 40);
+
+const SCENE_CLEAR_ENV_HEX = 0xffffff;
+const SCENE_CLEAR_PLAIN_HEX = 0x111111;
+const SCENE_BG_ENV_HEX = 0x9fc5e8;
+const SCENE_BG_PLAIN_HEX = 0x111111;
+const GRID_ENV_MAJOR_HEX = 0x2f4a2a;
+const GRID_ENV_MINOR_HEX = 0x1f321c;
+const GRID_PLAIN_MAJOR_HEX = 0x333333;
+const GRID_PLAIN_MINOR_HEX = 0x2a2a2a;
 
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
 camera.position.set(8, 5.6, 9);
@@ -36,15 +45,102 @@ fill.position.set(-5, 3, -3);
 scene.add(fill);
 
 // Grid floor
-const grid = new THREE.GridHelper(12, 24, 0x333333, 0x2a2a2a);
+const grid = new THREE.GridHelper(12, 24, GRID_ENV_MAJOR_HEX, GRID_ENV_MINOR_HEX);
 grid.position.set(2, 0, 1.75);
 scene.add(grid);
 
-// Dimensions (in metres)
-const W = 4.0;       // x axis (back wall width)
-const D = 3.5;       // z axis (room depth)
-const H_fixed = 3.5; // fixed wall height
-const H_adj = 4.0;   // adjustable panel total height
+// Dimensions (in metres) - runtime adjustable via UI/VR.
+let W = 4.5;       // x axis (back wall width)
+let D = 3.5;       // z axis (room depth)
+let H_fixed = 3.5; // fixed wall height
+let H_adj = 4.0;   // adjustable panel total height
+grid.position.set(W * 0.5, 0, D * 0.5);
+
+// Site layout controls (metres). Update these to reposition wall/fence/house context globally.
+const SITE_LAYOUT = Object.freeze({
+  fenceOffsetFromOrigin: 0.70,      // fence lines are at x/z = -0.70
+  fenceHeight: 1.80,                // boundary fence height
+  fenceLength: 20.00,               // fence run length from corner on each side
+  wallClearanceToFenceX: 0.80,      // target wall clearance to fence on x side
+  wallClearanceToFenceZ: 0.80,      // target wall clearance to fence on z side
+
+  houseBackOffsetX: 6.70,           // house roof footprint offset from back boundary
+  houseSideOffsetZ: 2.00,           // house roof footprint offset from side boundary
+  houseLengthZ: 16.40,              // roof footprint length along z
+  houseDepthX: 9.00,                // roof footprint depth along x
+  houseWallHeight: 2.40,            // wall height to roof start
+  houseRoofStartCap: 0.20,          // thin cap marker at roof-start level
+  houseRoofRise: 1.80,              // approximate hip roof rise above roof-start level
+  houseRoofOverhang: 0.25,          // roof overhang beyond roof footprint
+  houseEaveInset: 0.60,             // wall inset from roof footprint (eave depth)
+  houseBackWallProjectLen: 3.34,    // rear wall segment projected to eave line from corner
+
+  housePathWidth: 0.60,             // concrete path width around house
+  housePathThickness: 0.038,        // concrete path thickness
+
+  outdoorSlabHeight: 0.10,          // outdoor slab thickness
+  outdoorSlabProjectionX: 6.20,     // slab projection from back wall direction
+  outdoorSlabWidthZ: 4.94,          // slab width
+  outdoorSlabStartAlongProjection: 0.27, // slab start from non-corner end of projection
+
+  // Neighbor house (side boundary): update neighborFenceSetback as measured.
+  neighborLengthX: 18.00,           // roof footprint length
+  neighborWidthZ: 8.60,             // roof footprint width
+  // Shifted back so the rear-most window edge aligns with the back fence line.
+  // rear window edge x = roofX0 + neighborEaveInset + neighborWindowBackOffset = -fenceOffset
+  neighborBackOffsetX: -2.30,       // roof footprint offset from back boundary (x=0)
+  neighborFenceSetback: 1.25,       // nearest roof edge setback from side fence line (z=-0.7)
+  neighborWallHeight: 5.40,         // two-storey wall height to roof start
+  neighborRoofStartCap: 0.20,       // thin cap marker at roof-start level
+  neighborRoofRise: 1.50,           // lower peak than main house
+  neighborRoofOverhang: 0.25,       // roof overhang beyond roof footprint
+  neighborEaveInset: 0.60,          // wall inset from roof footprint (eaves)
+  neighborWindowCount: 4,           // side windows on face toward this property
+  neighborWindowBottomY: 3.20,      // sill height from ground
+  neighborWindowWidth: 1.20,        // window width
+  neighborWindowFrontOffset: 3.00,  // from front end to nearest window edge
+  neighborWindowBackOffset: 1.00,   // from back end to nearest window edge
+});
+
+const FENCE_OFFSET_FROM_ORIGIN = SITE_LAYOUT.fenceOffsetFromOrigin;
+const FENCE_HEIGHT = SITE_LAYOUT.fenceHeight;
+const FENCE_LENGTH = SITE_LAYOUT.fenceLength;
+const WALL_CLEARANCE_TO_FENCE_X = SITE_LAYOUT.wallClearanceToFenceX;
+const WALL_CLEARANCE_TO_FENCE_Z = SITE_LAYOUT.wallClearanceToFenceZ;
+const WALL_ORIGIN_X = WALL_CLEARANCE_TO_FENCE_X - FENCE_OFFSET_FROM_ORIGIN;
+const WALL_ORIGIN_Z = WALL_CLEARANCE_TO_FENCE_Z - FENCE_OFFSET_FROM_ORIGIN;
+
+const HOUSE_BACK_OFFSET_X = SITE_LAYOUT.houseBackOffsetX;
+const HOUSE_SIDE_OFFSET_Z = SITE_LAYOUT.houseSideOffsetZ;
+const HOUSE_LENGTH_Z = SITE_LAYOUT.houseLengthZ;
+const HOUSE_DEPTH_X = SITE_LAYOUT.houseDepthX;
+const HOUSE_WALL_HEIGHT = SITE_LAYOUT.houseWallHeight;
+const HOUSE_ROOF_START_CAP = SITE_LAYOUT.houseRoofStartCap;
+const HOUSE_ROOF_RISE = SITE_LAYOUT.houseRoofRise;
+const HOUSE_ROOF_OVERHANG = SITE_LAYOUT.houseRoofOverhang;
+const HOUSE_EAVE_INSET = SITE_LAYOUT.houseEaveInset;
+const HOUSE_BACK_WALL_PROJECT_LEN = SITE_LAYOUT.houseBackWallProjectLen;
+const HOUSE_PATH_WIDTH = SITE_LAYOUT.housePathWidth;
+const HOUSE_PATH_THICKNESS = SITE_LAYOUT.housePathThickness;
+const OUTDOOR_SLAB_HEIGHT = SITE_LAYOUT.outdoorSlabHeight;
+const OUTDOOR_SLAB_PROJECTION_X = SITE_LAYOUT.outdoorSlabProjectionX;
+const OUTDOOR_SLAB_WIDTH_Z = SITE_LAYOUT.outdoorSlabWidthZ;
+const OUTDOOR_SLAB_START_ALONG_PROJECTION = SITE_LAYOUT.outdoorSlabStartAlongProjection;
+const NEIGHBOR_LENGTH_X = SITE_LAYOUT.neighborLengthX;
+const NEIGHBOR_WIDTH_Z = SITE_LAYOUT.neighborWidthZ;
+const NEIGHBOR_BACK_OFFSET_X = SITE_LAYOUT.neighborBackOffsetX;
+const NEIGHBOR_FENCE_SETBACK = SITE_LAYOUT.neighborFenceSetback;
+const NEIGHBOR_WALL_HEIGHT = SITE_LAYOUT.neighborWallHeight;
+const NEIGHBOR_ROOF_START_CAP = SITE_LAYOUT.neighborRoofStartCap;
+const NEIGHBOR_ROOF_RISE = SITE_LAYOUT.neighborRoofRise;
+const NEIGHBOR_ROOF_OVERHANG = SITE_LAYOUT.neighborRoofOverhang;
+const NEIGHBOR_EAVE_INSET = SITE_LAYOUT.neighborEaveInset;
+const NEIGHBOR_WINDOW_COUNT = SITE_LAYOUT.neighborWindowCount;
+const NEIGHBOR_WINDOW_BOTTOM_Y = SITE_LAYOUT.neighborWindowBottomY;
+const NEIGHBOR_WINDOW_WIDTH = SITE_LAYOUT.neighborWindowWidth;
+const NEIGHBOR_WINDOW_FRONT_OFFSET = SITE_LAYOUT.neighborWindowFrontOffset;
+const NEIGHBOR_WINDOW_BACK_OFFSET = SITE_LAYOUT.neighborWindowBackOffset;
+
 const thick = 0.08;
 const KICK = 0.7;    // vertical kick height at base of all walls
 const ROOF_PITCH_DEG = 5;
@@ -52,7 +148,9 @@ const ROOF_PITCH_TAN = Math.tan(THREE.MathUtils.degToRad(ROOF_PITCH_DEG));
 const ROOF_CLADDING_THICKNESS = 0.06;
 const CEILING_PLY_THICKNESS = 0.017;
 const POLY_ROOF_THICKNESS = 0.012;
-const POLY_ROOF_CLEARANCE = 0.15;
+const POLY_ROOF_CLEARANCE = 0.05; // raised poly roof by 0.10m from previous setting
+const E_SUPPORT_POST_SIZE = 0.10;
+const E_SUPPORT_POST_CLEARANCE = 0.01;
 const TRAINING_PULLUP_BAR_HEIGHT = 2.65;
 const TRAINING_HANGBOARD_TOP_HEIGHT = 2.55;
 const SON_HEIGHT = 1.33;
@@ -71,6 +169,23 @@ const WALL_TEXTURES_STORAGE_KEY = 'climbingWall.wallTextures.v1';
 const CLIMBING_HOLDS_STORAGE_KEY = 'climbingWall.climbingHolds.v1';
 const CRASH_MAT_TEXTURE_STORAGE_KEY = 'climbingWall.crashMatTexture.v1';
 const TEXTURES_STORAGE_KEY = 'climbingWall.textures.v1';
+const ENVIRONMENT_STORAGE_KEY = 'climbingWall.environment.v1';
+const WALL_GEOMETRY_STATE_STORAGE_KEY = 'climbingWall.geometryState.v1';
+const WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY = 'climbingWall.geometryDefaultState.v1';
+
+const WALL_GEOMETRY_STATE_LIMITS = Object.freeze({
+  width: [3.0, 7.0],
+  depth: [2.5, 6.0],
+  fixedHeight: [2.8, 4.5],
+  adjustableHeight: [3.0, 5.5],
+});
+
+const BUILTIN_WALL_GEOMETRY_STATE = Object.freeze({
+  width: 4.5,
+  depth: 3.5,
+  fixedHeight: 3.5,
+  adjustableHeight: 4.0,
+});
 const WALL_STATE_LIMITS = {
   aAngle: [0, 60], aWidth: [0.3, 2.5],
   bAngle: [0, 60], bWidth: [0.3, 2.5],
@@ -78,7 +193,7 @@ const WALL_STATE_LIMITS = {
   dAngle: [0, 60], d1Height: [0.5, 2.7], d2Angle: [0, 75],
   eAngle: [-5, 60],
   f1Angle: [0, 40], f1Height: [2.0, 2.7], f1Width: [0.1, 1.0],
-  f2Angle: [0, 75], f2WidthTop: [0.3, 4.0],
+  f2Angle: [0, 75], f2WidthTop: [0.3, W],
   rigOpen: [0, 180],
 };
 
@@ -166,6 +281,121 @@ function persistStoredBool(key, value) {
   }
 }
 
+function clampWallGeometryStateValue(key, value) {
+  const limits = WALL_GEOMETRY_STATE_LIMITS[key];
+  if (!limits) return value;
+  return Math.max(limits[0], Math.min(limits[1], value));
+}
+
+function normalizeWallGeometryState(seed, source) {
+  const state = {...seed};
+  if (!source || typeof source !== 'object') return state;
+  Object.keys(seed).forEach(key => {
+    const v = Number(source[key]);
+    if (!Number.isFinite(v)) return;
+    state[key] = clampWallGeometryStateValue(key, v);
+  });
+  return state;
+}
+
+function refreshWallStateLimitsForGeometry() {
+  WALL_STATE_LIMITS.f2WidthTop[1] = Math.max(WALL_STATE_LIMITS.f2WidthTop[0], W);
+  WALL_STATE_LIMITS.aWidth[1] = Math.max(WALL_STATE_LIMITS.aWidth[0], D);
+  const hAvail = Math.max(0.6, H_fixed - KICK - 0.1);
+  WALL_STATE_LIMITS.d1Height[1] = Math.max(WALL_STATE_LIMITS.d1Height[0], hAvail);
+  WALL_STATE_LIMITS.f1Height[1] = Math.max(WALL_STATE_LIMITS.f1Height[0], hAvail);
+}
+
+function loadDefaultWallGeometryState() {
+  const fallback = {...BUILTIN_WALL_GEOMETRY_STATE};
+  const explicitDefaults = readStoredWallState(WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY);
+  if (explicitDefaults) return normalizeWallGeometryState(fallback, explicitDefaults);
+
+  const savedState = readStoredWallState(WALL_GEOMETRY_STATE_STORAGE_KEY);
+  if (!savedState) return fallback;
+  const migratedDefaults = normalizeWallGeometryState(fallback, savedState);
+  persistWallState(WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY, migratedDefaults);
+  return migratedDefaults;
+}
+
+let defaultWallGeometryState = loadDefaultWallGeometryState();
+
+function loadWallGeometryState() {
+  const state = {...defaultWallGeometryState};
+  const savedState = readStoredWallState(WALL_GEOMETRY_STATE_STORAGE_KEY);
+  return normalizeWallGeometryState(state, savedState);
+}
+
+let wallGeometryState = loadWallGeometryState();
+W = wallGeometryState.width;
+D = wallGeometryState.depth;
+H_fixed = wallGeometryState.fixedHeight;
+H_adj = wallGeometryState.adjustableHeight;
+grid.position.set(W * 0.5, 0, D * 0.5);
+refreshWallStateLimitsForGeometry();
+
+function syncWallGeometryAnchors() {
+  grid.position.set(W * 0.5, 0, D * 0.5);
+  if (typeof WALL_TEXTURE_ROOM_CENTER !== 'undefined' && WALL_TEXTURE_ROOM_CENTER?.set) {
+    WALL_TEXTURE_ROOM_CENTER.set(
+      WALL_ORIGIN_X + (W * 0.5),
+      H_fixed * 0.52,
+      WALL_ORIGIN_Z + (D * 0.5)
+    );
+  }
+}
+
+function applyWallGeometryState(nextState, {rebuildScene=true, persistState=true, persistDefaults=false}={}) {
+  const normalized = normalizeWallGeometryState(defaultWallGeometryState, nextState);
+  wallGeometryState = {...normalized};
+  W = wallGeometryState.width;
+  D = wallGeometryState.depth;
+  H_fixed = wallGeometryState.fixedHeight;
+  H_adj = wallGeometryState.adjustableHeight;
+  refreshWallStateLimitsForGeometry();
+  syncWallGeometryAnchors();
+
+  if (typeof wallState !== 'undefined' && wallState) {
+    Object.keys(wallState).forEach(key => {
+      const current = Number(wallState[key]);
+      if (!Number.isFinite(current)) return;
+      wallState[key] = clampWallStateValue(key, current);
+    });
+  }
+
+  if (persistState) persistWallState(WALL_GEOMETRY_STATE_STORAGE_KEY, wallGeometryState);
+  if (persistDefaults) {
+    defaultWallGeometryState = {...wallGeometryState};
+    persistWallState(WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY, defaultWallGeometryState);
+  }
+
+  if (typeof rebuildFloorSlab === 'function') rebuildFloorSlab();
+  if (typeof updateEnvironmentAnchors === 'function') updateEnvironmentAnchors();
+  if (rebuildScene && typeof rebuild === 'function') rebuild();
+  return wallGeometryState;
+}
+
+function saveWallGeometryState(updateDefaults=true) {
+  const stateToSave = normalizeWallGeometryState(defaultWallGeometryState, wallGeometryState);
+  const okState = persistWallState(WALL_GEOMETRY_STATE_STORAGE_KEY, stateToSave);
+  if (!updateDefaults) return okState;
+  defaultWallGeometryState = {...stateToSave};
+  const okDefaults = persistWallState(WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY, defaultWallGeometryState);
+  return okState && okDefaults;
+}
+
+function resetWallGeometryState() {
+  applyWallGeometryState(defaultWallGeometryState, {rebuildScene:false, persistState:true, persistDefaults:false});
+}
+
+function setWallGeometryValue(key, value, {rebuildScene=true, persistState=true}={}) {
+  if (!Object.prototype.hasOwnProperty.call(BUILTIN_WALL_GEOMETRY_STATE, key)) return false;
+  const next = {...wallGeometryState};
+  next[key] = clampWallGeometryStateValue(key, Number(value) || BUILTIN_WALL_GEOMETRY_STATE[key]);
+  applyWallGeometryState(next, {rebuildScene, persistState, persistDefaults:false});
+  return true;
+}
+
 function clampCameraStateValue(key, value) {
   switch (key) {
     case 'phi': return Math.max(0.05, Math.min(Math.PI - 0.05, value));
@@ -244,12 +474,16 @@ const wallState = loadWallState();
 
 // ── Scene groups that get rebuilt on each change ──
 let wallGroup = new THREE.Group();
+wallGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
 scene.add(wallGroup);
 let dimGroup  = new THREE.Group();
+dimGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
 scene.add(dimGroup);
 let labelGroup = new THREE.Group();
+labelGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
 scene.add(labelGroup);
 let hoverDimGroup = new THREE.Group();
+hoverDimGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
 scene.add(hoverDimGroup);
 let hoverTargets = [];
 let scalePersonBillboard = null;
@@ -257,6 +491,7 @@ let scalePersonMesh = null;
 let scalePersonCompanionBillboard = null;
 let scalePersonCompanionMesh = null;
 let crashMatsGroup = null;
+let environmentGroup = null;
 let crashMatsEnabled = readStoredBool(CRASH_MATS_STORAGE_KEY, true);
 let polyRoofEnabled = readStoredBool(POLY_ROOF_STORAGE_KEY, true);
 let trainingRigEnabled = readStoredBool(TRAINING_RIG_STORAGE_KEY, true);
@@ -266,6 +501,7 @@ let conceptVolumesEnabled = readStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, true);
 let texturedWallsEnabled = readStoredBool(WALL_TEXTURES_STORAGE_KEY, true);
 let climbingHoldsEnabled = readStoredBool(CLIMBING_HOLDS_STORAGE_KEY, true);
 let crashMatTextureEnabled = readStoredBool(CRASH_MAT_TEXTURE_STORAGE_KEY, true);
+let environmentEnabled = readStoredBool(ENVIRONMENT_STORAGE_KEY, false);
 let texturesEnabled = (() => {
   if (typeof localStorage === 'undefined') {
     return texturedWallsEnabled && crashMatTextureEnabled;
@@ -282,9 +518,38 @@ let texturesEnabled = (() => {
 texturedWallsEnabled = texturesEnabled;
 crashMatTextureEnabled = texturesEnabled;
 
+function setGridColors(centerHex, gridHex) {
+  if (typeof grid?.setColors === 'function') {
+    grid.setColors(centerHex, gridHex);
+    return;
+  }
+  const mats = Array.isArray(grid?.material) ? grid.material : [grid?.material];
+  if (mats[0]?.color) mats[0].color.setHex(centerHex);
+  if (mats[1]?.color) mats[1].color.setHex(gridHex);
+}
+
+function applyEnvironmentVisualState() {
+  const clearHex = environmentEnabled ? SCENE_CLEAR_ENV_HEX : SCENE_CLEAR_PLAIN_HEX;
+  const bgHex = environmentEnabled ? SCENE_BG_ENV_HEX : SCENE_BG_PLAIN_HEX;
+  renderer.setClearColor(clearHex);
+  if (scene.fog?.color) scene.fog.color.setHex(clearHex);
+  if (scene.background && scene.background.isColor) scene.background.setHex(bgHex);
+  else scene.background = new THREE.Color(bgHex);
+  if (grid) grid.visible = !environmentEnabled;
+  setGridColors(
+    environmentEnabled ? GRID_ENV_MAJOR_HEX : GRID_PLAIN_MAJOR_HEX,
+    environmentEnabled ? GRID_ENV_MINOR_HEX : GRID_PLAIN_MINOR_HEX
+  );
+  if (environmentGroup) environmentGroup.visible = environmentEnabled;
+}
+
+applyEnvironmentVisualState();
+
 function isPointOnCrashMat(x, z, margin=0) {
   if (!crashMatsEnabled) return false;
   if (!Number.isFinite(x) || !Number.isFinite(z)) return true;
+  const localX = x - WALL_ORIGIN_X;
+  const localZ = z - WALL_ORIGIN_Z;
 
   const seam = 0.02;
   const matW = (W - seam) * 0.5;
@@ -295,14 +560,14 @@ function isPointOnCrashMat(x, z, margin=0) {
   const eps = 1e-4 + Math.abs(m);
 
   // Main interior 4-pad area.
-  if (x >= (-eps - m) && x <= (W + eps + m) && z >= (-eps - m) && z <= (D + eps + m)) return true;
+  if (localX >= (-eps - m) && localX <= (W + eps + m) && localZ >= (-eps - m) && localZ <= (D + eps + m)) return true;
 
   // Front 50 cm extensions.
-  if (x >= (-eps - m) && x <= (matW + eps + m) && z >= (D - eps - m) && z <= (D + edgeExtension + eps + m)) return true;
-  if (x >= ((matW + seam) - eps - m) && x <= (frontStopX + eps + m) && z >= (D - eps - m) && z <= (D + edgeExtension + eps + m)) return true;
+  if (localX >= (-eps - m) && localX <= (matW + eps + m) && localZ >= (D - eps - m) && localZ <= (D + edgeExtension + eps + m)) return true;
+  if (localX >= ((matW + seam) - eps - m) && localX <= (frontStopX + eps + m) && localZ >= (D - eps - m) && localZ <= (D + edgeExtension + eps + m)) return true;
 
   // Side 50 cm extensions.
-  if (x >= (W - eps - m) && x <= (W + edgeExtension + eps + m) && z >= (-eps - m) && z <= (D + eps + m)) return true;
+  if (localX >= (W - eps - m) && localX <= (W + edgeExtension + eps + m) && localZ >= (-eps - m) && localZ <= (D + eps + m)) return true;
 
   return false;
 }
@@ -319,7 +584,7 @@ function updateScalePersonFloorOffset() {
     if (!person || !person.position) return;
     const yOffset = Number(person.userData?.personYOffset);
     if (!Number.isFinite(yOffset)) return;
-    person.position.y = getActiveFloorY() + yOffset;
+    person.position.y = getActiveFloorY(person.position.x, person.position.z) + yOffset;
   });
 }
 
@@ -395,6 +660,12 @@ function setClimbingHoldsEnabled(enabled) {
   if (typeof rebuild === 'function') rebuild();
 }
 
+function setEnvironmentEnabled(enabled) {
+  environmentEnabled = !!enabled;
+  persistStoredBool(ENVIRONMENT_STORAGE_KEY, environmentEnabled);
+  applyEnvironmentVisualState();
+}
+
 // ── Materials ──
 const claddingMat = new THREE.MeshStandardMaterial({
   color: 0x4a4d52,
@@ -434,7 +705,11 @@ let holdBumpTexture = null;
 let holdMaterials = null;
 let wallMats = {};
 let wallMatBuckets = {};
-const WALL_TEXTURE_ROOM_CENTER = new THREE.Vector3(W * 0.5, H_fixed * 0.52, D * 0.5);
+const WALL_TEXTURE_ROOM_CENTER = new THREE.Vector3(
+  WALL_ORIGIN_X + (W * 0.5),
+  H_fixed * 0.52,
+  WALL_ORIGIN_Z + (D * 0.5)
+);
 const CUSTOM_WALL_TEXTURE_DIR = 'textures/walls';
 const DEFAULT_PLYWOOD_PREVIEW_DIR = 'textures/sources/plywood04517';
 const DEFAULT_PLYWOOD_REPEAT_X = 2.0;
@@ -446,6 +721,7 @@ const CONCEPT_VOLUME_TEXTURE_DIR = 'textures/volumes';
 let conceptVolumeMats = {};
 let volumeCustomTextureEntries = {};
 let volumeTextureLoader = null;
+let customTextureCompositeCache = new Map();
 
 function hashString(str) {
   let h = 2166136261;
@@ -506,6 +782,49 @@ function configureLoadedTiledTexture(tex, repeatX=1, repeatY=1) {
   }
   tex.needsUpdate = true;
   return tex;
+}
+
+function getTextureImageSize(tex) {
+  const img = tex?.image;
+  if (!img) return null;
+  const w = Number(img.videoWidth || img.naturalWidth || img.width || 0);
+  const h = Number(img.videoHeight || img.naturalHeight || img.height || 0);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return {w, h, img};
+}
+
+function getCompositedOverlayTexture(overlayTex, baseTex) {
+  if (!overlayTex) return null;
+  const overlayInfo = getTextureImageSize(overlayTex);
+  if (!overlayInfo) return overlayTex;
+  const baseInfo = getTextureImageSize(baseTex);
+  if (!baseInfo) return overlayTex;
+
+  const repX = Math.max(0.0001, Math.abs(Number(baseTex?.repeat?.x) || 1));
+  const repY = Math.max(0.0001, Math.abs(Number(baseTex?.repeat?.y) || 1));
+  const key = `${overlayTex.uuid}|${baseTex.uuid}|${repX.toFixed(4)}|${repY.toFixed(4)}|${overlayInfo.w}x${overlayInfo.h}`;
+  const cached = customTextureCompositeCache.get(key);
+  if (cached) return cached;
+
+  const cv = document.createElement('canvas');
+  cv.width = overlayInfo.w;
+  cv.height = overlayInfo.h;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return overlayTex;
+
+  const tileW = cv.width / repX;
+  const tileH = cv.height / repY;
+  for (let y = 0; y < cv.height; y += tileH) {
+    for (let x = 0; x < cv.width; x += tileW) {
+      ctx.drawImage(baseInfo.img, x, y, tileW, tileH);
+    }
+  }
+
+  // Overlay keeps its alpha, revealing base plywood in transparent regions.
+  ctx.drawImage(overlayInfo.img, 0, 0, cv.width, cv.height);
+  const composed = configureLoadedWallTexture(new THREE.CanvasTexture(cv));
+  customTextureCompositeCache.set(key, composed);
+  return composed;
 }
 
 function getWallCustomTextureEntry(textureKey) {
@@ -1025,22 +1344,21 @@ function applyConceptVolumeMaterialStyle(volumeId=null) {
     }
 
     const texturePack = getWallTexturePack();
-    const customFront = getCustomVolumeFrontTexture(id);
+    const customFrontRaw = getCustomVolumeFrontTexture(id);
+    const customFront = customFrontRaw
+      ? getCompositedOverlayTexture(customFrontRaw, texturePack.map)
+      : null;
     const customBump = getCustomVolumeBumpTexture(id);
-    const useDefaultPack = !customFront;
     mat.color.setHex(0xffffff);
     mat.map = customFront || texturePack.map || null;
     if (customBump) {
       mat.bumpMap = customBump;
       mat.bumpScale = 0.022;
-    } else if (useDefaultPack) {
+    } else {
       mat.bumpMap = texturePack.bumpMap || null;
       mat.bumpScale = mat.bumpMap ? 0.018 : 0;
-    } else {
-      mat.bumpMap = null;
-      mat.bumpScale = 0;
     }
-    mat.normalMap = useDefaultPack ? (texturePack.normalMap || null) : null;
+    mat.normalMap = texturePack.normalMap || null;
     if (mat.normalMap) {
       if (!mat.normalScale) mat.normalScale = new THREE.Vector2(0.62, 0.62);
       else mat.normalScale.set(0.62, 0.62);
@@ -1126,22 +1444,21 @@ function applyWallMaterialStyle(id, mat, sectionId='main') {
     return;
   }
   const texturePack = getWallTexturePack();
-  const customFront = getCustomWallFrontTexture(id, section);
+  const customFrontRaw = getCustomWallFrontTexture(id, section);
+  const customFront = customFrontRaw
+    ? getCompositedOverlayTexture(customFrontRaw, texturePack.map)
+    : null;
   const customBump = getCustomWallBumpTexture(id, section);
-  const useDefaultPack = !customFront;
   mat.color.setHex(0xffffff);
   mat.map = customFront || texturePack.map || null;
   if (customBump) {
     mat.bumpMap = customBump;
     mat.bumpScale = id === 'E' ? 0.015 : 0.020;
-  } else if (useDefaultPack) {
+  } else {
     mat.bumpMap = texturePack.bumpMap || null;
     mat.bumpScale = id === 'E' ? 0.010 : 0.014;
-  } else {
-    mat.bumpMap = null;
-    mat.bumpScale = 0;
   }
-  mat.normalMap = useDefaultPack ? (texturePack.normalMap || null) : null;
+  mat.normalMap = texturePack.normalMap || null;
   if (mat.normalMap) {
     if (!mat.normalScale) mat.normalScale = new THREE.Vector2(0.60, 0.60);
     else mat.normalScale.set(0.60, 0.60);

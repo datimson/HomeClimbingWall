@@ -6,6 +6,19 @@ let theta = 0.9, phi = 0.55, radius = 12;
 const ORBIT_MIN_POLAR = 0.05;
 const ORBIT_MAX_POLAR = Math.PI - 0.05;
 let targetX = 2, targetY = 1.7, targetZ = 1.5;
+const DESKTOP_MOVE_SPEED_MPS = 2.2;
+const DESKTOP_MOVE_RUN_MULT = 1.7;
+const desktopMoveKeys = {
+  forward: false,
+  back: false,
+  left: false,
+  right: false,
+  fast: false,
+};
+const desktopForward = new THREE.Vector3();
+const desktopRight = new THREE.Vector3();
+const desktopMoveDelta = new THREE.Vector3();
+const desktopUp = new THREE.Vector3(0, 1, 0);
 const raycaster = new THREE.Raycaster();
 const hoverMouse = new THREE.Vector2();
 const hoverInfoEl = document.getElementById('hoverInfo');
@@ -71,11 +84,13 @@ function requestRebuild({immediate=false} = {}) {
 const XR_FLOOR_EYE_HEIGHT = 1.72;
 const XR_MIN_EYE_HEIGHT = 1.20;
 const XR_MAX_EYE_HEIGHT = 2.25;
+const XR_USER_HEIGHT_STORAGE_KEY = 'climbingWall.vrUserHeight.v1';
 const XR_MOVE_SPEED_MPS = 1.9;
 const XR_FLY_SPEED_MPS = 1.7;
 const XR_CONTROLLER_VISUAL_OPACITY = 0.42;
 const XR_STICK_DEADZONE = 0.16;
 const XR_STICK_CLICK_BUTTON_INDEX = 3;
+const XR_MENU_BUTTON_INDICES = Object.freeze([5, 4]);
 const XR_TELEPORT_MAX_DISTANCE = 20;
 const XR_TELEPORT_SURFACE_EPS = 0.012;
 const XR_FLOOR_SWITCH_HYSTERESIS = 0.06;
@@ -101,8 +116,7 @@ let xrMoveMode = XR_MOVE_MODE.GROUNDED;
 let xrGroundFloorY = 0;
 let xrActiveControllerIndex = 0;
 let xrNeedsGroundSnap = false;
-let xrStandingEyeHeight = XR_FLOOR_EYE_HEIGHT;
-let xrCaptureStandingEyeHeight = false;
+let xrStandingEyeHeight = loadStoredVrUserHeight();
 const xrControllers = [];
 let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
@@ -172,6 +186,11 @@ xrTeleportMarker.visible = false;
 scene.add(xrTeleportMarker);
 
 const VR_MENU_SLIDERS = Object.freeze({
+  roomWidth: {label: 'Width', step: 0.05, min: WALL_GEOMETRY_STATE_LIMITS.width[0], max: WALL_GEOMETRY_STATE_LIMITS.width[1], fmt: v => `${v.toFixed(2)}m`},
+  roomDepth: {label: 'Depth', step: 0.05, min: WALL_GEOMETRY_STATE_LIMITS.depth[0], max: WALL_GEOMETRY_STATE_LIMITS.depth[1], fmt: v => `${v.toFixed(2)}m`},
+  fixedHeight: {label: 'Fixed H', step: 0.05, min: WALL_GEOMETRY_STATE_LIMITS.fixedHeight[0], max: WALL_GEOMETRY_STATE_LIMITS.fixedHeight[1], fmt: v => `${v.toFixed(2)}m`},
+  adjHeight: {label: 'Adj H', step: 0.05, min: WALL_GEOMETRY_STATE_LIMITS.adjustableHeight[0], max: WALL_GEOMETRY_STATE_LIMITS.adjustableHeight[1], fmt: v => `${v.toFixed(2)}m`},
+  userHeight: {label: 'User H', step: 0.01, min: XR_MIN_EYE_HEIGHT, max: XR_MAX_EYE_HEIGHT, fmt: v => `${v.toFixed(2)}m`},
   aAngle: {label: 'A Angle', step: 1, min: 0, max: 60, fmt: v => `${Math.round(v)}°`},
   aWidth: {label: 'A Width', step: 0.05, min: 0.3, max: 2.5, fmt: v => `${v.toFixed(2)}m`},
   bAngle: {label: 'B Angle', step: 1, min: 0, max: 60, fmt: v => `${Math.round(v)}°`},
@@ -186,11 +205,12 @@ const VR_MENU_SLIDERS = Object.freeze({
   f1Height: {label: 'F1 Height', step: 0.05, min: 2.0, max: 2.7, fmt: v => `${v.toFixed(2)}m`},
   f1Width: {label: 'F1 Width', step: 0.05, min: 0.1, max: 1.0, fmt: v => `${v.toFixed(2)}m`},
   f2Angle: {label: 'F2 Angle', step: 1, min: 0, max: 75, fmt: v => `${Math.round(v)}°`},
-  f2WidthTop: {label: 'F2 Width', step: 0.05, min: 0.3, max: 4.0, fmt: v => `${v.toFixed(2)}m`},
+  f2WidthTop: {label: 'F2 Width', step: 0.05, min: 0.3, max: W, fmt: v => `${v.toFixed(2)}m`},
   rigOpen: {label: 'Rig Open', step: 5, min: 0, max: 180, fmt: v => `${Math.round(v)}°`},
 });
 
 const VR_MENU_TARGET_KEYS = Object.freeze({
+  S: ['roomWidth', 'roomDepth', 'fixedHeight', 'adjHeight', 'userHeight'],
   A: ['aAngle', 'aWidth'],
   B: ['bAngle', 'bWidth'],
   C: ['cAngle', 'cWidth'],
@@ -199,6 +219,13 @@ const VR_MENU_TARGET_KEYS = Object.freeze({
   F: ['f1Angle', 'f1Height', 'f1Width', 'f2Angle', 'f2WidthTop'],
   R: ['rigOpen'],
   G: [],
+});
+
+const VR_GEOMETRY_KEY_MAP = Object.freeze({
+  roomWidth: 'width',
+  roomDepth: 'depth',
+  fixedHeight: 'fixedHeight',
+  adjHeight: 'adjustableHeight',
 });
 
 const VR_MENU_BG_COLOR = 0xd7dce2;
@@ -462,12 +489,23 @@ function updateVrMenuSliderVisual(slider, value) {
   if (slider.valueLabel) updateVrTextPlane(slider.valueLabel, def.fmt(v));
 }
 
+function getVrMenuCurrentValue(key, def) {
+  const geometryKey = VR_GEOMETRY_KEY_MAP[key];
+  if (geometryKey) {
+    const raw = Number(wallGeometryState[geometryKey]);
+    return Number.isFinite(raw) ? raw : def.min;
+  }
+  if (key === 'userHeight') return getXrStandingEyeHeight();
+  const raw = Number(wallState[key]);
+  return Number.isFinite(raw) ? raw : def.min;
+}
+
 function refreshVrQuickMenuValues() {
   if (!vrQuickMenu.open) return;
   Object.keys(vrQuickMenu.slidersByKey || {}).forEach(key => {
     const slider = vrQuickMenu.slidersByKey[key];
     if (!slider) return;
-    updateVrMenuSliderVisual(slider, Number(wallState[key]) || 0);
+    updateVrMenuSliderVisual(slider, getVrMenuCurrentValue(key, slider.def));
   });
 }
 
@@ -521,6 +559,7 @@ function resolveVrMenuTarget(info) {
 }
 
 function vrMenuTitleForTarget(target) {
+  if (target === 'S') return 'Wall Size';
   if (target === 'R') return 'Training Rig';
   return `Wall ${target}`;
 }
@@ -529,8 +568,23 @@ function applyVrMenuStateKey(key, nextValue) {
   const def = VR_MENU_SLIDERS[key];
   if (!def) return;
   const clamped = quantizeVrSliderValue(def, nextValue);
-  const current = quantizeVrSliderValue(def, Number(wallState[key]) || def.min);
+  const geometryKey = VR_GEOMETRY_KEY_MAP[key];
+  const current = quantizeVrSliderValue(def, getVrMenuCurrentValue(key, def));
   if (Math.abs(clamped - current) < Math.max(1e-6, (Number(def.step) || 0) * 0.25)) return;
+
+  if (geometryKey) {
+    setWallGeometryValue(geometryKey, clamped, {rebuildScene: true, persistState: true});
+    syncGeometrySlidersFromState();
+    syncSlidersFromState();
+    refreshVrQuickMenuValues();
+    return;
+  }
+
+  if (key === 'userHeight') {
+    setXrStandingEyeHeight(clamped, {persist: true, applyGroundSnap: true});
+    refreshVrQuickMenuValues();
+    return;
+  }
 
   if (key === 'eAngle') {
     eSweepAnim.active = false;
@@ -593,8 +647,10 @@ function buildVrQuickMenu(target) {
 
   const width = VR_MENU_BASE_WIDTH;
   const rowH = VR_MENU_ROW_HEIGHT;
+  const hasHeightRecalc = target === 'S';
   const hasRows = keys.length > 0;
-  const height = hasRows ? (0.20 + keys.length * rowH) : 0.28;
+  const extraRows = hasHeightRecalc ? 1 : 0;
+  const height = hasRows ? (0.20 + (keys.length + extraRows) * rowH) : (hasHeightRecalc ? 0.38 : 0.28);
   const halfW = width * 0.5;
   const halfH = height * 0.5;
   const innerLeft = -halfW + VR_MENU_PADDING_X;
@@ -652,7 +708,7 @@ function buildVrQuickMenu(target) {
     keys.forEach((key, idx) => {
       const def = VR_MENU_SLIDERS[key];
       if (!def) return;
-      const v = quantizeVrSliderValue(def, Number(wallState[key]) || def.min);
+      const v = quantizeVrSliderValue(def, getVrMenuCurrentValue(key, def));
       const y = halfH - 0.155 - idx * rowH;
 
       const label = makeVrTextPlane(def.label, labelW, 0.07, {
@@ -730,6 +786,14 @@ function buildVrQuickMenu(target) {
       interactive.push(track);
       interactive.push(knob);
     });
+    if (hasHeightRecalc) {
+      const y = halfH - 0.155 - keys.length * rowH;
+      const autoBtn = makeVrMenuButton('Auto Height', 0.30, 0.07, 0xbac2ca);
+      autoBtn.position.set(0, y, 0.003);
+      autoBtn.userData.vrMenuAction = {type: 'recalcHeight'};
+      group.add(autoBtn);
+      interactive.push(autoBtn);
+    }
   } else {
     const msg = makeVrTextPlane('No adjustable sliders', 0.58, 0.10, {
       color: VR_MENU_TEXT_DARK_COLOR,
@@ -776,7 +840,7 @@ function setVrMenuSliderFromHit(slider, hitPoint) {
   const t = THREE.MathUtils.clamp((local.x / slider.trackWidth) + 0.5, 0, 1);
   const raw = slider.def.min + t * (slider.def.max - slider.def.min);
   const next = quantizeVrSliderValue(slider.def, raw);
-  const curr = quantizeVrSliderValue(slider.def, Number(wallState[slider.key]) || slider.def.min);
+  const curr = quantizeVrSliderValue(slider.def, getVrMenuCurrentValue(slider.key, slider.def));
   if (Math.abs(next - curr) < 1e-6) return false;
   applyVrMenuStateKey(slider.key, next);
   updateVrMenuSliderVisual(slider, next);
@@ -908,6 +972,11 @@ function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=f
   const action = hit?.object?.userData?.vrMenuAction;
   if (!action) return false;
   if (action.type === 'block') return true;
+  if (action.type === 'recalcHeight') {
+    const ok = recalcXrStandingEyeHeightFromHead();
+    if (ok) refreshVrQuickMenuValues();
+    return true;
+  }
   if (action.type === 'close') {
     clearVrQuickMenu();
     return true;
@@ -1112,6 +1181,52 @@ function getXrStandingEyeHeight() {
   return THREE.MathUtils.clamp(Number(xrStandingEyeHeight) || XR_FLOOR_EYE_HEIGHT, XR_MIN_EYE_HEIGHT, XR_MAX_EYE_HEIGHT);
 }
 
+function loadStoredVrUserHeight() {
+  if (typeof localStorage === 'undefined') return XR_FLOOR_EYE_HEIGHT;
+  try {
+    const raw = localStorage.getItem(XR_USER_HEIGHT_STORAGE_KEY);
+    if (raw === null) return XR_FLOOR_EYE_HEIGHT;
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return XR_FLOOR_EYE_HEIGHT;
+    return THREE.MathUtils.clamp(v, XR_MIN_EYE_HEIGHT, XR_MAX_EYE_HEIGHT);
+  } catch (_) {
+    return XR_FLOOR_EYE_HEIGHT;
+  }
+}
+
+function persistVrUserHeight(value) {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(XR_USER_HEIGHT_STORAGE_KEY, String(value));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function setXrStandingEyeHeight(value, {persist=true, applyGroundSnap=true} = {}) {
+  xrStandingEyeHeight = THREE.MathUtils.clamp(Number(value) || XR_FLOOR_EYE_HEIGHT, XR_MIN_EYE_HEIGHT, XR_MAX_EYE_HEIGHT);
+  if (persist) persistVrUserHeight(xrStandingEyeHeight);
+  if (!applyGroundSnap || !xrSessionActive || xrMoveMode !== XR_MOVE_MODE.GROUNDED) return;
+  const xrCam = renderer.xr.getCamera(camera);
+  xrNeedsGroundSnap = true;
+  updateGroundFloorFromHead(xrCam, true);
+  targetY = xrRig.position.y;
+}
+
+function recalcXrStandingEyeHeightFromHead() {
+  if (!xrSessionActive) return false;
+  const xrCam = renderer.xr.getCamera(camera);
+  if (!xrCam) return false;
+  xrCam.updateMatrixWorld(true);
+  xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
+  const floorY = getActiveFloorY(xrHeadWorld.x, xrHeadWorld.z);
+  const measured = xrHeadWorld.y - floorY;
+  if (!Number.isFinite(measured)) return false;
+  setXrStandingEyeHeight(measured, {persist: true, applyGroundSnap: true});
+  return true;
+}
+
 function loadQuestControllerModelTemplate(side) {
   if (side !== 'left' && side !== 'right') return Promise.resolve(null);
   if (!xrControllerGltfLoader) return Promise.resolve(null);
@@ -1219,6 +1334,7 @@ function updateVrControllerConnection(state, connected, data=null) {
   state.interactiveHit = null;
   state.floorHit = null;
   state.stickPressedLast = false;
+  state.menuPressedLast = false;
   state.anyPressedLast = false;
   state.visualReady = false;
   state.loadingModelSide = null;
@@ -1267,6 +1383,7 @@ function ensureVrControllers() {
       interactiveHit: null,
       floorHit: null,
       stickPressedLast: false,
+      menuPressedLast: false,
       anyPressedLast: false,
     };
     controller.addEventListener('connected', ev => {
@@ -1368,14 +1485,6 @@ function updateGroundFloorFromHead(xrCam, sticky=true) {
   xrCam.updateMatrixWorld(true);
   xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
   const nextFloorY = sticky ? getStickyGroundFloorY(xrHeadWorld.x, xrHeadWorld.z) : getActiveFloorY(xrHeadWorld.x, xrHeadWorld.z);
-
-  if (xrCaptureStandingEyeHeight) {
-    const measured = Math.abs(Number(xrCam.position?.y) || 0);
-    if (Number.isFinite(measured) && measured >= XR_MIN_EYE_HEIGHT && measured <= XR_MAX_EYE_HEIGHT) {
-      xrStandingEyeHeight = measured;
-      xrCaptureStandingEyeHeight = false;
-    }
-  }
   const floorChanged = Math.abs(nextFloorY - xrGroundFloorY) > 1e-5;
   if (floorChanged || xrNeedsGroundSnap) {
     const desiredHeadY = nextFloorY + getXrStandingEyeHeight();
@@ -1421,6 +1530,32 @@ function updateVrMoveModeToggle() {
     state.stickPressedLast = pressed;
   });
   if (toggleRequested) toggleVrMoveMode();
+}
+
+function readVrMenuButtonPressed(state) {
+  if (!state?.connected || state.handedness !== 'left') return false;
+  const buttons = state.inputSource?.gamepad?.buttons;
+  if (!buttons?.length) return false;
+  for (let i = 0; i < XR_MENU_BUTTON_INDICES.length; i++) {
+    const idx = XR_MENU_BUTTON_INDICES[i];
+    if (buttons[idx]?.pressed) return true;
+  }
+  return false;
+}
+
+function updateVrMenuButtonToggle() {
+  let toggleRequested = false;
+  xrControllers.forEach(state => {
+    const pressed = readVrMenuButtonPressed(state);
+    if (pressed && !state.menuPressedLast) toggleRequested = true;
+    state.menuPressedLast = pressed;
+  });
+  if (!toggleRequested) return;
+  if (vrQuickMenu.open) {
+    clearVrQuickMenu();
+    return;
+  }
+  buildVrQuickMenu('S');
 }
 
 function handleVrInteractiveClick(hit) {
@@ -1590,8 +1725,7 @@ function beginVrSession() {
   xrMoveMode = XR_MOVE_MODE.GROUNDED;
   xrGroundFloorY = startFloorY;
   xrNeedsGroundSnap = true;
-  xrStandingEyeHeight = XR_FLOOR_EYE_HEIGHT;
-  xrCaptureStandingEyeHeight = true;
+  xrStandingEyeHeight = loadStoredVrUserHeight();
   xrNeedsYawAlignment = !!xrEntryForward;
   xrActiveControllerIndex = 0;
   xrEntryStartPos = null;
@@ -1603,6 +1737,7 @@ function beginVrSession() {
     state.interactiveHit = null;
     state.floorHit = null;
     state.stickPressedLast = false;
+    state.menuPressedLast = false;
     state.anyPressedLast = false;
     state.visualReady = false;
     if (state.rayLine) state.rayLine.visible = !!state.connected;
@@ -1619,6 +1754,7 @@ function endVrSession() {
     state.interactiveHit = null;
     state.floorHit = null;
     state.stickPressedLast = false;
+    state.menuPressedLast = false;
     state.anyPressedLast = false;
     state.visualReady = false;
     if (state.rayLine) state.rayLine.visible = false;
@@ -1631,8 +1767,7 @@ function endVrSession() {
   xrMoveMode = XR_MOVE_MODE.GROUNDED;
   xrGroundFloorY = 0;
   xrNeedsGroundSnap = false;
-  xrStandingEyeHeight = XR_FLOOR_EYE_HEIGHT;
-  xrCaptureStandingEyeHeight = false;
+  xrStandingEyeHeight = loadStoredVrUserHeight();
   xrNeedsYawAlignment = false;
   xrActiveControllerIndex = 0;
   xrEntryStartPos = null;
@@ -1695,6 +1830,7 @@ function updateVrLocomotion(dtSeconds) {
   alignVrYawToDesktop(xrCam);
 
   updateVrMoveModeToggle();
+  updateVrMenuButtonToggle();
   if (xrMoveMode === XR_MOVE_MODE.GROUNDED) updateGroundFloorFromHead(xrCam, true);
   const blockedSource = vrMenuMove.active
     ? (xrControllers.find(s => s.index === vrMenuMove.controllerIndex)?.inputSource || null)
@@ -2024,6 +2160,86 @@ function panCamera(dx, dy, verticalPan=false) {
   targetZ += pan.z;
 }
 
+function shouldIgnoreDesktopMoveEvent(e) {
+  if (xrSessionActive) return true;
+  if (e.metaKey || e.ctrlKey || e.altKey) return true;
+  const target = e.target;
+  if (!target) return false;
+  const tag = String(target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable) return true;
+  return false;
+}
+
+function setDesktopMoveKeyState(e, pressed) {
+  if (shouldIgnoreDesktopMoveEvent(e)) return false;
+  let key = null;
+  switch (e.code) {
+    case 'ArrowUp':
+    case 'KeyW':
+      key = 'forward';
+      break;
+    case 'ArrowDown':
+    case 'KeyS':
+      key = 'back';
+      break;
+    case 'ArrowLeft':
+    case 'KeyA':
+      key = 'left';
+      break;
+    case 'ArrowRight':
+    case 'KeyD':
+      key = 'right';
+      break;
+    case 'ShiftLeft':
+    case 'ShiftRight':
+      key = 'fast';
+      break;
+    default:
+      break;
+  }
+  if (!key) return false;
+  desktopMoveKeys[key] = pressed;
+  e.preventDefault();
+  if (pressed && introAnim.active) stopIntroAnimation({restoreStart: false});
+  return true;
+}
+
+function clearDesktopMoveKeys() {
+  desktopMoveKeys.forward = false;
+  desktopMoveKeys.back = false;
+  desktopMoveKeys.left = false;
+  desktopMoveKeys.right = false;
+  desktopMoveKeys.fast = false;
+}
+
+function updateDesktopKeyboardMove(dt) {
+  if (xrSessionActive || introAnim.active) return;
+  const hasMove =
+    desktopMoveKeys.forward ||
+    desktopMoveKeys.back ||
+    desktopMoveKeys.left ||
+    desktopMoveKeys.right;
+  if (!hasMove) return;
+
+  camera.getWorldDirection(desktopForward);
+  desktopForward.y = 0;
+  if (desktopForward.lengthSq() < 1e-6) return;
+  desktopForward.normalize();
+  desktopRight.crossVectors(desktopForward, desktopUp).normalize();
+
+  desktopMoveDelta.set(0, 0, 0);
+  if (desktopMoveKeys.forward) desktopMoveDelta.add(desktopForward);
+  if (desktopMoveKeys.back) desktopMoveDelta.sub(desktopForward);
+  if (desktopMoveKeys.right) desktopMoveDelta.add(desktopRight);
+  if (desktopMoveKeys.left) desktopMoveDelta.sub(desktopRight);
+  if (desktopMoveDelta.lengthSq() < 1e-6) return;
+
+  const speed = DESKTOP_MOVE_SPEED_MPS * (desktopMoveKeys.fast ? DESKTOP_MOVE_RUN_MULT : 1);
+  desktopMoveDelta.normalize().multiplyScalar(speed * dt);
+  targetX += desktopMoveDelta.x;
+  targetZ += desktopMoveDelta.z;
+}
+
 function setGroupOpacity(group, alpha) {
   if (!group) return;
   group.traverse(obj => {
@@ -2295,7 +2511,96 @@ wrap.addEventListener('touchmove', e => {
   }
 }, { passive: false });
 
+window.addEventListener('keydown', e => {
+  setDesktopMoveKeyState(e, true);
+});
+window.addEventListener('keyup', e => {
+  setDesktopMoveKeyState(e, false);
+});
+window.addEventListener('blur', clearDesktopMoveKeys);
+
 // ── Slider wiring ──
+function syncDynamicSliderBounds() {
+  const clampInputToRange = (id, min, max) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.min = String(min);
+    el.max = String(max);
+    const v = Number(el.value);
+    if (!Number.isFinite(v)) return;
+    const clamped = THREE.MathUtils.clamp(v, min, max);
+    if (Math.abs(clamped - v) > 1e-6) el.value = String(clamped);
+  };
+
+  const dynamicKeys = ['aWidth', 'd1Height', 'f1Height', 'f2WidthTop'];
+  dynamicKeys.forEach(key => {
+    const current = Number(wallState[key]);
+    if (!Number.isFinite(current)) return;
+    wallState[key] = clampWallStateValue(key, current);
+  });
+
+  if (VR_MENU_SLIDERS?.aWidth) VR_MENU_SLIDERS.aWidth.max = WALL_STATE_LIMITS.aWidth[1];
+  if (VR_MENU_SLIDERS?.d1Height) VR_MENU_SLIDERS.d1Height.max = WALL_STATE_LIMITS.d1Height[1];
+  if (VR_MENU_SLIDERS?.f1Height) VR_MENU_SLIDERS.f1Height.max = WALL_STATE_LIMITS.f1Height[1];
+  if (VR_MENU_SLIDERS?.f2WidthTop) VR_MENU_SLIDERS.f2WidthTop.max = WALL_STATE_LIMITS.f2WidthTop[1];
+
+  clampInputToRange('aWidth', WALL_STATE_LIMITS.aWidth[0], WALL_STATE_LIMITS.aWidth[1]);
+  clampInputToRange('d1Height', WALL_STATE_LIMITS.d1Height[0], WALL_STATE_LIMITS.d1Height[1]);
+  clampInputToRange('f1Height', WALL_STATE_LIMITS.f1Height[0], WALL_STATE_LIMITS.f1Height[1]);
+  clampInputToRange('f2WidthTop', WALL_STATE_LIMITS.f2WidthTop[0], WALL_STATE_LIMITS.f2WidthTop[1]);
+}
+
+function syncGeometryCards() {
+  const setText = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `${v.toFixed(2)} m`;
+  };
+  setText('roomWidthCard', wallGeometryState.width);
+  setText('roomDepthCard', wallGeometryState.depth);
+  setText('fixedHeightCard', wallGeometryState.fixedHeight);
+  setText('adjHeightCard', wallGeometryState.adjustableHeight);
+}
+
+function bindGeometrySlider(id, labelId, geometryKey, fmt) {
+  const el = document.getElementById(id);
+  const lbl = document.getElementById(labelId);
+  if (!el || !Object.prototype.hasOwnProperty.call(wallGeometryState, geometryKey)) return;
+  const initial = Number(wallGeometryState[geometryKey]);
+  if (Number.isFinite(initial)) {
+    el.value = String(initial);
+    if (lbl) lbl.textContent = fmt(initial);
+  }
+  el.addEventListener('input', () => {
+    const v = Number(el.value);
+    if (!Number.isFinite(v)) return;
+    setWallGeometryValue(geometryKey, v, {rebuildScene: true, persistState: true});
+    syncDynamicSliderBounds();
+    syncSlidersFromState();
+    syncGeometrySlidersFromState();
+    syncGeometryCards();
+    refreshVrQuickMenuValues();
+  });
+}
+
+function syncGeometrySlidersFromState() {
+  const defs = [
+    ['roomWidth', 'roomWidthLabel', 'width'],
+    ['roomDepth', 'roomDepthLabel', 'depth'],
+    ['fixedHeight', 'fixedHeightLabel', 'fixedHeight'],
+    ['adjHeight', 'adjHeightLabel', 'adjustableHeight'],
+  ];
+  defs.forEach(([id, labelId, key]) => {
+    const el = document.getElementById(id);
+    const lbl = document.getElementById(labelId);
+    const v = Number(wallGeometryState[key]);
+    if (!el || !Number.isFinite(v)) return;
+    el.value = String(v);
+    if (lbl) lbl.textContent = `${v.toFixed(2)}m`;
+  });
+  syncDynamicSliderBounds();
+  syncGeometryCards();
+}
+
 function bindSlider(id, labelId, stateKey, fmt, triggerRebuild) {
   const el = document.getElementById(id);
   const lbl = document.getElementById(labelId);
@@ -2325,6 +2630,7 @@ function bindSlider(id, labelId, stateKey, fmt, triggerRebuild) {
 }
 
 function syncSlidersFromState() {
+  syncDynamicSliderBounds();
   const defs = [
     ['angleSlider', 'angleLabel', 'eAngle', v => v + '°'],
     ['aAngle', 'aAngleLabel', 'aAngle', v => v + '°'],
@@ -2368,7 +2674,12 @@ bindSlider('f1Width', 'f1WidthLabel', 'f1Width', v => v.toFixed(2) + 'm', true);
 bindSlider('f2Angle', 'f2AngleLabel', 'f2Angle', v => v + '°', true);
 bindSlider('f2WidthTop', 'f2WidthTopLabel', 'f2WidthTop', v => v.toFixed(2) + 'm', true);
 bindSlider('rigOpen', 'rigOpenLabel', 'rigOpen', v => Math.round(v) + '°', true);
+bindGeometrySlider('roomWidth', 'roomWidthLabel', 'width', v => v.toFixed(2) + 'm');
+bindGeometrySlider('roomDepth', 'roomDepthLabel', 'depth', v => v.toFixed(2) + 'm');
+bindGeometrySlider('fixedHeight', 'fixedHeightLabel', 'fixedHeight', v => v.toFixed(2) + 'm');
+bindGeometrySlider('adjHeight', 'adjHeightLabel', 'adjustableHeight', v => v.toFixed(2) + 'm');
 syncSlidersFromState();
+syncGeometrySlidersFromState();
 
 const wallControlsDetails = document.getElementById('wallControlsDetails');
 if (wallControlsDetails && window.matchMedia && window.matchMedia('(max-width: 980px)').matches) {
@@ -2379,8 +2690,9 @@ const saveConfigBtn = document.getElementById('saveConfigBtn');
 if (saveConfigBtn) {
   saveConfigBtn.addEventListener('click', () => {
     const okWalls = saveWallState(true);
+    const okGeom = saveWallGeometryState(true);
     const okCamera = persistCurrentCameraState();
-    const ok = okWalls && okCamera;
+    const ok = okWalls && okGeom && okCamera;
     showSaveStatus(ok ? 'Saved as defaults' : 'Save failed', !ok);
   });
 }
@@ -2388,7 +2700,9 @@ if (saveConfigBtn) {
 const resetConfigBtn = document.getElementById('resetConfigBtn');
 if (resetConfigBtn) {
   resetConfigBtn.addEventListener('click', () => {
+    resetWallGeometryState();
     resetWallState();
+    syncGeometrySlidersFromState();
     syncSlidersFromState();
     const savedCam = (typeof loadCameraState === 'function') ? loadCameraState() : null;
     if (savedCam) {
@@ -2417,6 +2731,14 @@ if (texturesToggle) {
   texturesToggle.checked = texturesEnabled;
   texturesToggle.addEventListener('change', () => {
     setTexturesEnabled(texturesToggle.checked);
+  });
+}
+
+const environmentToggle = document.getElementById('environmentToggle');
+if (environmentToggle) {
+  environmentToggle.checked = environmentEnabled;
+  environmentToggle.addEventListener('change', () => {
+    setEnvironmentEnabled(environmentToggle.checked);
   });
 }
 
@@ -2496,6 +2818,7 @@ function animate(now) {
     updateVrControllerPointers();
   } else {
     updateIntroAnimation(ts);
+    updateDesktopKeyboardMove(dt);
     camera.position.x = targetX + radius * Math.sin(phi) * Math.sin(theta);
     camera.position.y = targetY + radius * Math.cos(phi);
     camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);

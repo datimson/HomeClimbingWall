@@ -1,5 +1,5 @@
 :root {
-  --panel-width: 380px;
+  --panel-width: 400px;
   --mobile-canvas-height: 52svh;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }

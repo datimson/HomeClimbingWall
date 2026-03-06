@@ -18,25 +18,13 @@
       <span>Design Brief — For Engineer Review</span>
     </header>
     <canvas id="c"></canvas>
-    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll or pinch to zoom &nbsp;·&nbsp; Right-drag or two-finger drag to pan &nbsp;·&nbsp; Tap/click to stop intro &nbsp;·&nbsp; VR: trigger floor to teleport, trigger wall/rig for quick sliders, thumbstick move, stick-click toggles fly mode</div>
+    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll or pinch to zoom &nbsp;·&nbsp; Right-drag or two-finger drag to pan &nbsp;·&nbsp; Arrow keys/WASD move &nbsp;·&nbsp; Shift = faster &nbsp;·&nbsp; Tap/click to stop intro &nbsp;·&nbsp; VR: trigger floor to teleport, trigger wall/rig for quick sliders, left menu button opens Wall Size, thumbstick moves, stick-click toggles fly mode</div>
     <div id="hoverInfo" class="hover-info"></div>
     <button id="reactivateCameraBtn" class="reactivate-camera-btn" type="button">Replay Intro</button>
     <button id="enterVrBtn" class="enter-vr-btn is-hidden" type="button">Enter VR</button>
   </div>
 
   <div class="panel">
-    <div class="section">
-      <h2>Key Dimensions</h2>
-      <div class="dim-grid">
-        <div class="dim-card"><div class="label">Floor Width</div><div class="value">4.0 m</div></div>
-        <div class="dim-card"><div class="label">Floor Depth</div><div class="value">3.5 m</div></div>
-        <div class="dim-card"><div class="label">Fixed Wall H</div><div class="value">3.5 m</div></div>
-        <div class="dim-card"><div class="label">Adj. Panel H</div><div class="value">4.0 m</div></div>
-        <div class="dim-card"><div class="label">Adj. Angle</div><div class="value">−5° to 60°</div></div>
-        <div class="dim-card"><div class="label">Cladding</div><div class="value">Monument</div></div>
-      </div>
-    </div>
-
     <div class="section">
       <h2>Display Toggles</h2>
       <div class="toggle-row">
@@ -89,6 +77,13 @@
         </div>
       </div>
       <div class="toggle-row">
+        <label class="toggle-label" for="environmentToggle">Environment</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="environmentToggle">
+          <span class="toggle-meta">sky + grass + fence + grid</span>
+        </div>
+      </div>
+      <div class="toggle-row">
         <label class="toggle-label" for="polyRoofToggle">Poly Roof Extension</label>
         <div class="toggle-input-wrap">
           <input type="checkbox" id="polyRoofToggle">
@@ -106,6 +101,29 @@
             <button id="resetConfigBtn" class="action-btn action-btn--ghost">Reset Defaults</button>
             <span id="saveStatus" class="save-status"></span>
           </div>
+
+          <div class="control-subhead">Overall Wall Envelope</div>
+          <div class="angle-row">
+            <label>Width</label>
+            <input type="range" id="roomWidth" min="3.0" max="7.0" value="4.5" step="0.05">
+            <span class="angle-val" id="roomWidthLabel">4.50m</span>
+          </div>
+          <div class="angle-row">
+            <label>Depth</label>
+            <input type="range" id="roomDepth" min="2.5" max="6.0" value="3.5" step="0.05">
+            <span class="angle-val" id="roomDepthLabel">3.50m</span>
+          </div>
+          <div class="angle-row">
+            <label>Fixed wall height</label>
+            <input type="range" id="fixedHeight" min="2.8" max="4.5" value="3.5" step="0.05">
+            <span class="angle-val" id="fixedHeightLabel">3.50m</span>
+          </div>
+          <div class="angle-row">
+            <label>Adjustable wall height</label>
+            <input type="range" id="adjHeight" min="3.0" max="5.5" value="4.0" step="0.05">
+            <span class="angle-val" id="adjHeightLabel">4.00m</span>
+          </div>
+          <div class="control-note control-note--spacious">Global envelope for the whole wall system</div>
 
           <div class="control-subhead">Wall E — Adjustable Panel</div>
           <div class="angle-row">
@@ -196,7 +214,7 @@
           </div>
           <div class="angle-row">
             <label>Top width</label>
-            <input type="range" id="f2WidthTop" min="0.3" max="4.0" value="1.3" step="0.05">
+            <input type="range" id="f2WidthTop" min="0.3" max="4.5" value="1.3" step="0.05">
             <span class="angle-val" id="f2WidthTopLabel">1.30m</span>
           </div>
           <div class="control-note">Both sections right-aligned — roof spans top width to meet D</div>
@@ -231,9 +249,9 @@
       <h2>Engineer Notes</h2>
       <span class="tag">Draft</span>
       <ul>
-        <li>Floor footprint: 4.0 m × 3.5 m. Structure sits on concrete slab — footing design TBC with engineer.</li>
-        <li>Fixed wall section runs along the full 4.0 m wall and wraps a short distance along the 3.5 m wall, forming an internal corner. Fixed wall max height: 3.5 m.</li>
-        <li>Fixed wall interior (climbing face) is thick structural ply, divided into three angled sections along the 4.0 m back wall: a 40° overhang cave section (approx. 1.3 m wide) at the corner; a 15° moderate overhang section (approx. 1.5 m); and a 5° slight lean section (approx. 1.2 m) at the far end.</li>
+        <li>Floor footprint: 4.5 m × 3.5 m. Structure sits on concrete slab — footing design TBC with engineer.</li>
+        <li>Fixed wall section runs along the full 4.5 m wall and wraps a short distance along the 3.5 m wall, forming an internal corner. Fixed wall max height: 3.5 m.</li>
+        <li>Fixed wall interior (climbing face) is thick structural ply, divided into three angled sections along the 4.5 m back wall: a 40° overhang cave section (approx. 1.3 m wide) at the corner; a 15° moderate overhang section (approx. 1.5 m); and a 5° slight lean section (approx. 1.2 m) at the far end.</li>
         <li>The 40° cave angle continues into the side wall section (approx. 1.5 m along Z), creating a full corner cave where the two 40° panels meet. This is the most demanding section and framing must be engineered accordingly.</li>
         <li>Adjustable panel completes the remainder of the 3.5 m wall length. It pivots from −5° (slight overhang, past vertical) to 60° from vertical (strong overhang). Panel height: 4.0 m — exceeds 3.5 m fixed wall height.</li>
         <li>Adjustable panel requires a robust pivoting mechanism at base (heavy-duty hinge / pivot pin) and a locking system capable of holding the panel securely at any set angle under dynamic climbing loads.</li>

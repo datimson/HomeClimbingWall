@@ -62,6 +62,10 @@ function roofUnderY(z) {
   return H_fixed + 0.001 + z * ROOF_PITCH_TAN;
 }
 
+// Extra rear depth behind kick boards to hide hold tails and allow structure space.
+const WALL_KICK_STRUCTURAL_DEPTH = 0.10;
+const WALL_KICK_STRUCTURAL_GAP = 0.001;
+
 // Flat panel for back walls: w wide, h tall (along face), leaning at r rad from vertical toward +Z.
 // Positioned at world (pivotX, startY, startZ), optional Y rotation.
 function makeFlatPanel(w, h, r, pivotX, startY, startZ, mat, facingY=0) {
@@ -152,18 +156,25 @@ function makeSideInfill(mat, pts) {
     const spanX = Math.max(0.001, bb.max.x - bb.min.x);
     const spanY = Math.max(0.001, bb.max.y - bb.min.y);
     const spanZ = Math.max(0.001, bb.max.z - bb.min.z);
-    const useXZ = spanX >= spanY;
+    // Project UVs on the dominant planar axes (drop the smallest span axis).
+    // This avoids severe stretch on closure panels where one axis is near-constant.
+    let dropAxis = 'x';
+    if (spanY <= spanX && spanY <= spanZ) dropAxis = 'y';
+    else if (spanZ <= spanX && spanZ <= spanY) dropAxis = 'z';
     const pos = geo.getAttribute('position');
     const uv = new Float32Array(pos.count * 2);
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const y = pos.getY(i);
       const z = pos.getZ(i);
-      if (useXZ) {
+      if (dropAxis === 'x') {
+        uv[i * 2] = (z - bb.min.z) / spanZ;
+        uv[i * 2 + 1] = (y - bb.min.y) / spanY;
+      } else if (dropAxis === 'y') {
         uv[i * 2] = (x - bb.min.x) / spanX;
         uv[i * 2 + 1] = (z - bb.min.z) / spanZ;
       } else {
-        uv[i * 2] = (z - bb.min.z) / spanZ;
+        uv[i * 2] = (x - bb.min.x) / spanX;
         uv[i * 2 + 1] = (y - bb.min.y) / spanY;
       }
     }
@@ -390,7 +401,11 @@ function getSectionFrame(mesh, info) {
   verts.forEach(v => centroid.add(v));
   centroid.multiplyScalar(1 / verts.length);
 
-  const roomCenter = new THREE.Vector3(W * 0.5, H_fixed * 0.52, D * 0.5);
+  const roomCenter = new THREE.Vector3(
+    (typeof WALL_ORIGIN_X === 'number' ? WALL_ORIGIN_X : 0) + (W * 0.5),
+    H_fixed * 0.52,
+    (typeof WALL_ORIGIN_Z === 'number' ? WALL_ORIGIN_Z : 0) + (D * 0.5)
+  );
   const toRoom = roomCenter.clone().sub(centroid);
 
   const worldQuat = new THREE.Quaternion();
@@ -449,6 +464,11 @@ function getSectionFrame(mesh, info) {
   if (normal.lengthSq() < 1e-10) return null;
   normal.normalize();
   if (normal.dot(toRoom) < 0) normal.negate();
+
+  // Wall-specific guard rails: keep normal on the intended climbing side.
+  if (info?.wall === 'F' && normal.z > 0) normal.negate();                 // F faces toward -Z
+  if ((info?.wall === 'B' || info?.wall === 'C' || info?.wall === 'D') && normal.z < 0) normal.negate(); // back walls face +Z
+  if ((info?.wall === 'A' || info?.wall === 'E') && normal.x < 0) normal.negate(); // side walls face +X
 
   const upDir = new THREE.Vector3();
   if (info?.faceBottomWorld && info?.faceTopWorld) {
@@ -613,6 +633,14 @@ function buildClimbingHolds(group) {
     return true;
   });
   if (!sections.length) return;
+  const wallSnapRay = new THREE.Raycaster();
+  const samplePoint = new THREE.Vector3();
+  const normalDir = new THREE.Vector3();
+  const reverseDir = new THREE.Vector3();
+  const rayOrigin = new THREE.Vector3();
+  const hitWorldNormal = new THREE.Vector3();
+  const normalMatrix = new THREE.Matrix3();
+  const zAxis = new THREE.Vector3(0, 0, 1);
 
   sections.forEach(mesh => {
     const info = mesh.userData.sectionInfo;
@@ -648,7 +676,8 @@ function buildClimbingHolds(group) {
     // Keep hold layout stable while sliders move: seed by wall+section only.
     const seedBase = holdHashString(`${info.wall}-${info.section}`);
     const rand = holdSeededRandom(seedBase);
-    const baseQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), frame.normal);
+    mesh.updateWorldMatrix(true, false);
+    normalMatrix.getNormalMatrix(mesh.matrixWorld);
 
     for (let i = 0; i < count; i++) {
       const u = THREE.MathUtils.lerp(usableU0, usableU1, rand());
@@ -661,13 +690,38 @@ function buildClimbingHolds(group) {
       const holdStyle = pickHoldStyle((holdSeed ^ holdHashString(info.wall)) >>> 0, footholdBias);
       const holdGeo = makeHoldGeometry(radius, depth, holdSeed, holdStyle);
       const hold = new THREE.Mesh(holdGeo, getHoldMaterial(holdSeed));
-      const frontZ = holdGeo.boundingBox ? holdGeo.boundingBox.max.z : (depth * 0.40);
-      hold.quaternion.copy(baseQuat);
-      hold.rotateZ(rand() * Math.PI * 2);
-      hold.position.copy(frame.origin)
+      const backZ = holdGeo.boundingBox ? holdGeo.boundingBox.min.z : (-depth * 0.45);
+      const mountOffset = Math.max(0.0015, (-backZ * 0.14) + 0.0010);
+      samplePoint.copy(frame.origin)
         .addScaledVector(frame.widthDir, u)
-        .addScaledVector(frame.upDir, v)
-        .addScaledVector(frame.normal, frontZ * 0.78 + 0.004);
+        .addScaledVector(frame.upDir, v);
+
+      normalDir.copy(frame.normal).normalize();
+      reverseDir.copy(normalDir).negate();
+
+      // Snap sample point to actual mesh surface on the chosen face to avoid "floating" holds.
+      rayOrigin.copy(samplePoint).addScaledVector(normalDir, 0.35);
+      wallSnapRay.set(rayOrigin, reverseDir);
+      let hits = wallSnapRay.intersectObject(mesh, false);
+      let anchor = hits.length ? hits[0].point : null;
+      if (!anchor) {
+        rayOrigin.copy(samplePoint).addScaledVector(normalDir, -0.35);
+        wallSnapRay.set(rayOrigin, normalDir);
+        hits = wallSnapRay.intersectObject(mesh, false);
+        anchor = hits.length ? hits[0].point : samplePoint;
+      }
+
+      if (hits.length && hits[0].face) {
+        hitWorldNormal.copy(hits[0].face.normal).applyMatrix3(normalMatrix).normalize();
+        if (hitWorldNormal.dot(normalDir) < 0) hitWorldNormal.negate();
+      } else {
+        hitWorldNormal.copy(normalDir);
+      }
+
+      hold.quaternion.setFromUnitVectors(zAxis, hitWorldNormal);
+      hold.rotateZ(rand() * Math.PI * 2);
+      hold.position.copy(anchor).addScaledVector(hitWorldNormal, mountOffset);
+      group.worldToLocal(hold.position);
       hold.castShadow = true;
       hold.receiveShadow = true;
       group.add(hold);
@@ -766,10 +820,11 @@ function addHoldsToVolumeMesh(group, mesh, seedLabel, count, normalFilter=null) 
     const holdStyle = pickHoldStyle((holdSeed ^ holdHashString(seedLabel)) >>> 0, false);
     const holdGeo = makeHoldGeometry(radius, depth, holdSeed, holdStyle);
     const hold = new THREE.Mesh(holdGeo, getHoldMaterial(holdSeed + 13));
-    const frontZ = holdGeo.boundingBox ? holdGeo.boundingBox.max.z : (depth * 0.40);
+    const backZ = holdGeo.boundingBox ? holdGeo.boundingBox.min.z : (-depth * 0.45);
+    const mountOffset = Math.max(0.0015, -backZ - 0.0015);
     hold.quaternion.setFromUnitVectors(zAxis, face.normal);
     hold.rotateZ(rand() * Math.PI * 2);
-    hold.position.copy(point).addScaledVector(face.normal, frontZ * 0.82 + 0.003);
+    hold.position.copy(point).addScaledVector(face.normal, mountOffset);
     hold.castShadow = true;
     hold.receiveShadow = true;
     group.add(hold);
@@ -807,7 +862,8 @@ function buildCeilingPanelHolds(group) {
 function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
   const r = angleDeg * Math.PI/180;
   const r2 = r / 2;  // upper section at half the angle
-  const roofBackY = roofUnderY(0);
+  const backZ = -WALL_KICK_STRUCTURAL_DEPTH;
+  const roofBackY = roofUnderY(backZ);
   const roofEdgeY = roofUnderY(roofEdgeZ);
   const H_base = roofBackY - KICK;
   const H_availAtEdge = roofEdgeY - KICK;
@@ -815,17 +871,39 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
   const xL = pivotX - w/2, xR = pivotX + w/2;
+  const needsBackClosure = Math.abs(angleDeg) > 0.001;
 
   // Kick
   const kickPanel = makeFlatPanel(w, KICK, 0, pivotX, 0, 0, matKick);
   group.add(kickPanel);
   registerSectionHover(kickPanel.userData.panelMesh, sectionInfo(wallId, 'Kick', 0, KICK, 0));
+  const kickDepthShell = box(
+    w,
+    KICK,
+    WALL_KICK_STRUCTURAL_DEPTH,
+    matKick,
+    0, 0, 0,
+    pivotX,
+    KICK * 0.5,
+    -((WALL_KICK_STRUCTURAL_DEPTH * 0.5) + WALL_KICK_STRUCTURAL_GAP)
+  );
+  group.add(kickDepthShell);
 
   if (angleDeg === 0) {
     const mainPanel = makeFlatPanel(w, H_base, 0, pivotX, KICK, 0, matS1);
     group.add(mainPanel);
     registerSectionHover(mainPanel.userData.panelMesh, sectionInfo(wallId, 'Section 1', 0, H_base, KICK));
     return;
+  }
+
+  if (needsBackClosure) {
+    const backPanel = makeSideInfill(matS2, [
+      {x:xL, y:KICK,     z:backZ},
+      {x:xR, y:KICK,     z:backZ},
+      {x:xR, y:roofBackY,z:backZ},
+      {x:xL, y:roofBackY,z:backZ},
+    ]);
+    group.add(backPanel);
   }
 
   const tanR = Math.tan(r);
@@ -839,11 +917,19 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
     const singlePanel = makeFlatPanel(w, singleH/Math.cos(r), r, pivotX, KICK, 0, matS1);
     group.add(singlePanel);
     registerSectionHover(singlePanel.userData.panelMesh, sectionInfo(wallId, 'Section 1', angleDeg, singleH, KICK));
-    [xL,xR].forEach(x => group.add(makeSideInfill(matS1,[
-      {x, y:KICK,    z:0},
-      {x, y:roofBackY, z:0},
-      {x, y:singleTopY, z:singleTopZ},
-    ])));
+    [xL,xR].forEach(x => {
+      group.add(makeSideInfill(matS1,[
+        {x, y:KICK,    z:backZ},
+        {x, y:roofBackY, z:backZ},
+        {x, y:singleTopY, z:singleTopZ},
+      ]));
+      // Kick-level return to close the gap from front wall (z=0) to shifted rear panel.
+      group.add(makeSideInfill(matS1,[
+        {x, y:KICK,      z:0},
+        {x, y:KICK,      z:backZ},
+        {x, y:singleTopY,z:singleTopZ},
+      ]));
+    });
     return;
   }
 
@@ -870,16 +956,22 @@ function buildBackSection(group, w, angleDeg, pivotX, roofEdgeZ, wallId) {
   [xL,xR].forEach(x => {
     // One quad traces the full side profile: base-back → split-back → split-face → roof-face
     group.add(makeSideInfill(matS1,[
-      {x, y:KICK,    z:0},
-      {x, y:splitY,  z:0},
+      {x, y:KICK,    z:backZ},
+      {x, y:splitY,  z:backZ},
       {x, y:splitY,  z:splitZ},
       {x, y:roofEdgeY, z:roofEdgeZ},
     ]));
     // Close the back edge from split to roof underside.
     group.add(makeSideInfill(matS2,[
-      {x, y:splitY,  z:0},
-      {x, y:roofBackY, z:0},
+      {x, y:splitY,  z:backZ},
+      {x, y:roofBackY, z:backZ},
       {x, y:roofEdgeY, z:roofEdgeZ},
+    ]));
+    // Kick-level return to close from z=0 front edge to shifted rear side edge.
+    group.add(makeSideInfill(matS1,[
+      {x, y:KICK,   z:0},
+      {x, y:KICK,   z:backZ},
+      {x, y:splitY, z:splitZ},
     ]));
   });
 }
@@ -895,11 +987,35 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
   const matS1 = getWallMat(wallId, 's1');
   const matS2 = getWallMat(wallId, 's2');
   const mirrorU = wallId === 'A';
+  const needsBackClosure = Math.abs(angleDeg) > 0.001;
+  const backX = -WALL_KICK_STRUCTURAL_DEPTH;
 
   // Kick
   const kickPanel = makeSidePanelGroup(depth, KICK, 0, 0, 0, matKick, mirrorU);
   group.add(kickPanel);
   registerSectionHover(kickPanel.userData.panelMesh, sectionInfo(wallId, 'Kick', 0, KICK, 0));
+  const kickDepthShell = box(
+    WALL_KICK_STRUCTURAL_DEPTH,
+    KICK,
+    depth,
+    matKick,
+    0, 0, 0,
+    -((WALL_KICK_STRUCTURAL_DEPTH * 0.5) + WALL_KICK_STRUCTURAL_GAP),
+    KICK * 0.5,
+    depth * 0.5
+  );
+  group.add(kickDepthShell);
+
+  if (needsBackClosure) {
+    // Close the rear opening of the side-wall wedge on x=0.
+    const backPanel = makeSideInfill(matS2, [
+      {x:backX, y:KICK, z:0},
+      {x:backX, y:KICK, z:depth},
+      {x:backX, y:roofY1, z:depth},
+      {x:backX, y:roofY0, z:0},
+    ]);
+    group.add(backPanel);
+  }
 
   if (angleDeg === 0) {
     const mainPanel = makeSidePanelSkewedGroup(depth, roofY0 - KICK, roofY1 - KICK, 0, KICK, 0, matS1, mirrorU);
@@ -916,23 +1032,35 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
       const topX = idx === 0 ? topXAtZ0 : topXAtZ1;
       if (splitX === undefined) {
         group.add(makeSideInfill(matS1,[
-          {x:0,    y:KICK,    z},
-          {x:0,    y:topY, z},
+          {x:backX,    y:KICK,    z},
+          {x:backX,    y:topY, z},
           {x:topX, y:topY, z},
+        ]));
+        // Kick-level return to close from front wall (x=0) to shifted rear plane.
+        group.add(makeSideInfill(matS1,[
+          {x:0,      y:KICK, z},
+          {x:backX,  y:KICK, z},
+          {x:topX,   y:topY, z},
         ]));
       } else {
         // Full side profile quad: base-back → split-back → split-face → roof-face
         group.add(makeSideInfill(matS1,[
-          {x:0,      y:KICK,        z},
-          {x:0,      y:KICK+h1_vert,z},
+          {x:backX,      y:KICK,        z},
+          {x:backX,      y:KICK+h1_vert,z},
           {x:splitX, y:KICK+h1_vert,z},
           {x:topX,   y:topY,     z},
         ]));
         // Back edge triangle: split-back → roof-back → roof-face
         group.add(makeSideInfill(matS2,[
-          {x:0,    y:KICK+h1_vert,z},
-          {x:0,    y:topY,     z},
+          {x:backX,    y:KICK+h1_vert,z},
+          {x:backX,    y:topY,     z},
           {x:topX, y:topY,     z},
+        ]));
+        // Kick-level return to close from x=0 front edge to shifted rear side edge.
+        group.add(makeSideInfill(matS1,[
+          {x:0,      y:KICK,         z},
+          {x:backX,  y:KICK,         z},
+          {x:splitX, y:KICK+h1_vert, z},
         ]));
       }
     });
@@ -991,7 +1119,8 @@ function buildSideSection(group, depth, angleDeg, roofEdgeZ, wallId) {
 // Section 1 uses angle1Deg up to splitHeight (default 2.0m above kick).
 // Section 2 uses angle2Deg from split to roof.
 function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitHeight=2.0, wallId='D') {
-  const H_base = roofUnderY(0) - KICK;
+  const backZ = -WALL_KICK_STRUCTURAL_DEPTH;
+  const H_base = roofUnderY(backZ) - KICK;
   const H_avail = H_base;
   const h1 = Math.max(0.1, Math.min(H_avail - 0.1, splitHeight));
   const r1 = angle1Deg * Math.PI/180;
@@ -1001,10 +1130,22 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
   const matS2 = getWallMat(wallId, 's2');
   const xL = pivotX - w/2;
   const xR = pivotX + w/2;
+  const needsBackClosure = (Math.abs(angle1Deg) > 0.001) || (Math.abs(angle2Deg) > 0.001);
 
   const kickPanel = makeFlatPanel(w, KICK, 0, pivotX, 0, 0, matKick);
   group.add(kickPanel);
   registerSectionHover(kickPanel.userData.panelMesh, sectionInfo(wallId, 'Kick', 0, KICK, 0));
+  const kickDepthShell = box(
+    w,
+    KICK,
+    WALL_KICK_STRUCTURAL_DEPTH,
+    matKick,
+    0, 0, 0,
+    pivotX,
+    KICK * 0.5,
+    -((WALL_KICK_STRUCTURAL_DEPTH * 0.5) + WALL_KICK_STRUCTURAL_GAP)
+  );
+  group.add(kickDepthShell);
 
   if (Math.abs(angle1Deg) < 0.001 && Math.abs(angle2Deg) < 0.001) {
     const mainPanel = makeFlatPanel(w, H_base, 0, pivotX, KICK, 0, matS1);
@@ -1019,9 +1160,19 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
   const roofZRaw = (h1 * tanR1) + ((H_base - h1) * tanR2);
   const roofZ = THREE.MathUtils.clamp(roofZRaw / denom, 0, D);
   const roofY = roofUnderY(roofZ);
-  const roofBackY = roofUnderY(0);
+  const roofBackY = roofUnderY(backZ);
   const h2 = Math.max(0.1, roofY - KICK - h1);
   const splitZ = h1 * Math.tan(r1);
+
+  if (needsBackClosure) {
+    const backPanel = makeSideInfill(matS2, [
+      {x:xL, y:KICK,     z:backZ},
+      {x:xR, y:KICK,     z:backZ},
+      {x:xR, y:roofBackY,z:backZ},
+      {x:xL, y:roofBackY,z:backZ},
+    ]);
+    group.add(backPanel);
+  }
 
   const lowerPanel = makeFlatPanel(w, h1 / Math.cos(r1), r1, pivotX, KICK, 0, matS1);
   const upperPanel = makeFlatPanel(w, h2 / Math.cos(r2), r2, pivotX, KICK + h1, splitZ, matS2);
@@ -1032,14 +1183,20 @@ function buildBackSectionTwoStage(group, w, angle1Deg, angle2Deg, pivotX, splitH
 
   [xL, xR].forEach(x => {
     group.add(makeSideInfill(matS1, [
-      {x, y:KICK,    z:0},
-      {x, y:KICK+h1, z:0},
+      {x, y:KICK,    z:backZ},
+      {x, y:KICK+h1, z:backZ},
       {x, y:KICK+h1, z:splitZ},
     ]));
     group.add(makeSideInfill(matS2, [
-      {x, y:KICK+h1, z:0},
-      {x, y:roofBackY, z:0},
+      {x, y:KICK+h1, z:backZ},
+      {x, y:roofBackY, z:backZ},
       {x, y:roofY, z:roofZ},
+      {x, y:KICK+h1, z:splitZ},
+    ]));
+    // Kick-level return to close from z=0 front edge to shifted rear side edge.
+    group.add(makeSideInfill(matS1, [
+      {x, y:KICK,    z:0},
+      {x, y:KICK,    z:backZ},
       {x, y:KICK+h1, z:splitZ},
     ]));
   });
@@ -1176,7 +1333,8 @@ function buildFWall(group, f1Width, f1Angle, f2Angle, f2WidthTop, f1Height=2.0) 
   const z2TopRaw = zBase - (F1_H * tanR1) - ((H_base - F1_H) * tanR2);
   const z2Top = THREE.MathUtils.clamp(z2TopRaw / denom, 0, D);
   const yRoof = roofUnderY(z2Top);
-  const yRoofBack = roofUnderY(zBase);
+  const zBack = zBase + WALL_KICK_STRUCTURAL_DEPTH;
+  const yRoofBack = roofUnderY(zBack);
 
   // Key Y positions
   const yKick = KICK;
@@ -1186,6 +1344,7 @@ function buildFWall(group, f1Width, f1Angle, f2Angle, f2WidthTop, f1Height=2.0) 
   // Key X positions (left edges — right edge always W)
   const xL1 = W - f1Width;       // left edge of sec1 (and kick)
   const xL2 = W - f2WidthTop;    // left edge of sec2 at roof
+  const needsBackClosure = (Math.abs(zBase - z1Top) > 0.001) || (Math.abs(zBase - z2Top) > 0.001);
 
   const makeFace = (BL,BR,TR,TL, matFace) => {
     const verts = [BL,BR,TR,TL].flatMap(p=>[p.x,p.y,p.z]);
@@ -1215,6 +1374,37 @@ function buildFWall(group, f1Width, f1Angle, f2Angle, f2WidthTop, f1Height=2.0) 
     kickMesh,
     sectionInfoFromCorners('F', 'Kick', 0, KICK, 0, kickBL, kickBR, kickTL, kickTR)
   );
+  const kickDepthShell = box(
+    f1Width,
+    KICK,
+    WALL_KICK_STRUCTURAL_DEPTH,
+    matKick,
+    0, 0, 0,
+    W - (f1Width * 0.5),
+    KICK * 0.5,
+    D + (WALL_KICK_STRUCTURAL_DEPTH * 0.5) + WALL_KICK_STRUCTURAL_GAP
+  );
+  group.add(kickDepthShell);
+
+  if (needsBackClosure) {
+    const backLower = makeSideInfill(matS1, [
+      {x:xL1, y:yKick, z:zBack},
+      {x:W,   y:yKick, z:zBack},
+      {x:W,   y:y1Top, z:zBack},
+      {x:xL1, y:y1Top, z:zBack},
+    ]);
+    group.add(backLower);
+
+    if ((yRoofBack - y1Top) > 0.02) {
+      const backUpper = makeSideInfill(matS2, [
+        {x:xL1, y:y1Top,    z:zBack},
+        {x:W,   y:y1Top,    z:zBack},
+        {x:W,   y:yRoofBack,z:zBack},
+        {x:xL2, y:yRoofBack,z:zBack},
+      ]);
+      group.add(backUpper);
+    }
+  }
 
   // ── Section 1 face ──
   const section1BL = {x:xL1, y:yKick, z:zBase};
@@ -1244,14 +1434,20 @@ function buildFWall(group, f1Width, f1Angle, f2Angle, f2WidthTop, f1Height=2.0) 
   // Right side is a single pentagon; split into two shapes:
   // Lower right: (yKick,zBase), (y1Top,zBase), (y1Top,z1Top)
   group.add(makeSideInfill(matS1,[
+    {x:W, y:yKick, z:zBack},
+    {x:W, y:y1Top, z:zBack},
+    {x:W, y:y1Top, z:z1Top},
+  ]));
+  // Kick-level return from front face (z=D) to rear depth plane.
+  group.add(makeSideInfill(matS1,[
     {x:W, y:yKick, z:zBase},
-    {x:W, y:y1Top, z:zBase},
+    {x:W, y:yKick, z:zBack},
     {x:W, y:y1Top, z:z1Top},
   ]));
   // Upper right: (y1Top,zBase), (yRoof,zBase), (yRoof,z2Top), (y1Top,z1Top)
   group.add(makeSideInfill(matS2,[
-    {x:W, y:y1Top, z:zBase},
-    {x:W, y:yRoofBack, z:zBase},
+    {x:W, y:y1Top, z:zBack},
+    {x:W, y:yRoofBack, z:zBack},
     {x:W, y:yRoof, z:z2Top},
     {x:W, y:y1Top, z:z1Top},
   ]));
@@ -1260,17 +1456,23 @@ function buildFWall(group, f1Width, f1Angle, f2Angle, f2WidthTop, f1Height=2.0) 
   // Sec1 left side is at constant x=xL1:
   // Profile: (yKick,zBase) → (yKick,zBase) kick bottom, (y1Top,z1Top) face, back to (y1Top,zBase)
   group.add(makeSideInfill(matS1,[
+    {x:xL1, y:yKick, z:zBack},
+    {x:xL1, y:y1Top, z:zBack},
+    {x:xL1, y:y1Top, z:z1Top},
+  ]));
+  // Kick-level return from front face (z=D) to rear depth plane.
+  group.add(makeSideInfill(matS1,[
     {x:xL1, y:yKick, z:zBase},
-    {x:xL1, y:y1Top, z:zBase},
+    {x:xL1, y:yKick, z:zBack},
     {x:xL1, y:y1Top, z:z1Top},
   ]));
   // Sec2 left side: x goes from xL1 (at y1Top) to xL2 (at yRoof) — not planar.
   // Represent it as one triangulated quad.
   group.add(makeSideInfill(matS2,[
-    {x:xL1, y:y1Top, z:zBase},
+    {x:xL1, y:y1Top, z:zBack},
     {x:xL1, y:y1Top, z:z1Top},
     {x:xL2, y:yRoof, z:z2Top},
-    {x:xL2, y:yRoofBack, z:zBase},
+    {x:xL2, y:yRoofBack, z:zBack},
   ]));
   // The sec2 side quad above already spans the back and face edges; adding an alternate
   // diagonal over the same area creates coplanar overlap artifacts while orbiting.
@@ -1567,7 +1769,8 @@ function buildTrainingRig(group, s) {
   const barRadius = 0.018;
   const boardGap = 0.006;
   const hangSide = -1; // opposite side of bracket frame (toward wall when closed)
-  const yBar = THREE.MathUtils.clamp(TRAINING_PULLUP_BAR_HEIGHT, KICK + 1.2, roofUnderY(D) + 1.0);
+  const rigVerticalDrop = 0.30;
+  const yBar = THREE.MathUtils.clamp(TRAINING_PULLUP_BAR_HEIGHT - rigVerticalDrop, KICK + 1.2, roofUnderY(D) + 1.0);
   const yTop = yBar + 0.02;
   const boardTop = Math.min(TRAINING_HANGBOARD_TOP_HEIGHT, yTop - 0.12);
   const boardY = boardTop - boardH * 0.5;
@@ -1768,6 +1971,10 @@ function buildTrainingRig(group, s) {
 function buildLRoof(group, fixedSideLen, dWidth, fWidth, dRoofZ=fixedSideLen, fRoofZ=D) {
   // Roof is a constant-thickness slab with 5° runoff:
   // low at B/C/D side (z=0), high toward F side (higher z).
+  const shellDepth = WALL_KICK_STRUCTURAL_DEPTH;
+  const zBack = -shellDepth;
+  const zFront = D + shellDepth;
+  const xLeft = -shellDepth;
   const capBaseY = H_fixed + 0.001;
   const t = ROOF_CLADDING_THICKNESS;
   const capBaseYAtZ = z => capBaseY + z * ROOF_PITCH_TAN;
@@ -1779,15 +1986,15 @@ function buildLRoof(group, fixedSideLen, dWidth, fWidth, dRoofZ=fixedSideLen, fR
 
   // ── 1. Fixed back cap: full width × fixedSideLen ──
   const capVerts1 = [
-    0,       capTopYAtZ(0),            0,
-    W,       capTopYAtZ(0),            0,
+    xLeft,   capTopYAtZ(zBack),        zBack,
+    W,       capTopYAtZ(zBack),        zBack,
     W,       capTopYAtZ(fixedSideLen), fixedSideLen,
-    0,       capTopYAtZ(fixedSideLen), fixedSideLen,
+    xLeft,   capTopYAtZ(fixedSideLen), fixedSideLen,
     // bottom face
-    0,       capBaseYAtZ(0),            0,
-    W,       capBaseYAtZ(0),            0,
+    xLeft,   capBaseYAtZ(zBack),        zBack,
+    W,       capBaseYAtZ(zBack),        zBack,
     W,       capBaseYAtZ(fixedSideLen), fixedSideLen,
-    0,       capBaseYAtZ(fixedSideLen), fixedSideLen,
+    xLeft,   capBaseYAtZ(fixedSideLen), fixedSideLen,
   ];
   group.add(makeSolidSlab(mat, capVerts1));
 
@@ -1797,12 +2004,12 @@ function buildLRoof(group, fixedSideLen, dWidth, fWidth, dRoofZ=fixedSideLen, fR
   const capVerts2 = [
     fx0, capTopYAtZ(fixedSideLen), fixedSideLen,
     W,   capTopYAtZ(fixedSideLen), fixedSideLen,
-    W,   capTopYAtZ(D),            D,
-    fx0, capTopYAtZ(D),            D,
+    W,   capTopYAtZ(zFront),       zFront,
+    fx0, capTopYAtZ(zFront),       zFront,
     fx0, capBaseYAtZ(fixedSideLen), fixedSideLen,
     W,   capBaseYAtZ(fixedSideLen), fixedSideLen,
-    W,   capBaseYAtZ(D),            D,
-    fx0, capBaseYAtZ(D),            D,
+    W,   capBaseYAtZ(zFront),       zFront,
+    fx0, capBaseYAtZ(zFront),       zFront,
   ];
   group.add(makeSolidSlab(mat, capVerts2));
 
@@ -1858,14 +2065,14 @@ function buildLRoof(group, fixedSideLen, dWidth, fWidth, dRoofZ=fixedSideLen, fR
   // Fixed-room underside: x from A (0) to D start (xDInner), z from back wall (0) to A reach (fixedSideLen).
   if (xDInner > 0.01 && fixedSideLen > 0.01) {
     const spanVerts = [
-      0,       plyTopYAtZ(0), 0,
-      xDInner, plyTopYAtZ(0), 0,
+      xLeft,   plyTopYAtZ(zBack), zBack,
+      xDInner, plyTopYAtZ(zBack), zBack,
       xDInner, plyTopYAtZ(fixedSideLen), fixedSideLen,
-      0,       plyTopYAtZ(fixedSideLen), fixedSideLen,
-      0,       plyBottomYAtZ(0), 0,
-      xDInner, plyBottomYAtZ(0), 0,
+      xLeft,   plyTopYAtZ(fixedSideLen), fixedSideLen,
+      xLeft,   plyBottomYAtZ(zBack), zBack,
+      xDInner, plyBottomYAtZ(zBack), zBack,
       xDInner, plyBottomYAtZ(fixedSideLen), fixedSideLen,
-      0,       plyBottomYAtZ(fixedSideLen), fixedSideLen,
+      xLeft,   plyBottomYAtZ(fixedSideLen), fixedSideLen,
     ];
     const spanMesh = makeSolidSlab(ceilingGapMat, spanVerts);
     spanMesh.userData.labelWall = 'G';
@@ -1878,6 +2085,36 @@ function buildLRoof(group, fixedSideLen, dWidth, fWidth, dRoofZ=fixedSideLen, fR
     ));
     group.add(spanMesh);
   }
+}
+
+function getESupportPostLayout(fixedSideLen) {
+  const size = (typeof E_SUPPORT_POST_SIZE === 'number') ? E_SUPPORT_POST_SIZE : 0.10;
+  const clearance = (typeof E_SUPPORT_POST_CLEARANCE === 'number') ? E_SUPPORT_POST_CLEARANCE : 0.01;
+  const edgeInset = (size * 0.5) + 0.005;
+  const x = edgeInset;
+  const z = D - edgeInset;
+  const eStartZ = fixedSideLen;
+  const eEndZ = Math.max(eStartZ + 0.2, z - (size * 0.5) - clearance);
+  return { size, clearance, x, z, eStartZ, eEndZ };
+}
+
+function buildESupportPost(group, fixedSideLen) {
+  const support = getESupportPostLayout(fixedSideLen);
+  const topY = roofUnderY(support.z) + ROOF_CLADDING_THICKNESS;
+  const post = box(
+    support.size,
+    topY,
+    support.size,
+    polyRoofPostMat,
+    0, 0, 0,
+    support.x,
+    topY * 0.5,
+    support.z
+  );
+  post.castShadow = true;
+  post.receiveShadow = true;
+  post.userData.context = 'eSupportPost';
+  group.add(post);
 }
 
 // ── Optional polycarbonate roof extension over the currently open area ──
@@ -1933,19 +2170,44 @@ function buildPolyRoofExtension(group, fixedSideLen, fWidth) {
   const pzB = z1 - edgePad;
   if (pxR <= pxL + 0.02 || pzB <= pzF + 0.02) return;
 
-  const placePost = (px, pz) => {
-    const postBottomY = roofTopYAtZ(pz);
-    const postTopY = polyBottomAtZ(pz);
-    const postH = postTopY - postBottomY;
-    if (postH <= 0.03) return;
-    const post = box(postW, postH, postD, polyRoofPostMat, 0, 0, 0, px, postBottomY + postH * 0.5, pz);
+  const placeVerticalPost = (px, pz, w, d, bottomY, topY) => {
+    const postH = topY - bottomY;
+    if (postH <= 0.03) return null;
+    const post = box(w, postH, d, polyRoofPostMat, 0, 0, 0, px, bottomY + postH * 0.5, pz);
     post.castShadow = true;
     post.receiveShadow = true;
     group.add(post);
+    return post;
+  };
+  const placePost = (px, pz) => {
+    const postBottomY = roofTopYAtZ(pz);
+    const postTopY = polyBottomAtZ(pz);
+    placeVerticalPost(px, pz, postW, postD, postBottomY, postTopY);
+  };
+  const placeBrace = (p0, p1, thickness=0.06) => {
+    const axis = new THREE.Vector3().subVectors(p1, p0);
+    const len = axis.length();
+    if (len <= 0.03) return;
+    const mid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
+    const brace = box(thickness, len, thickness, polyRoofPostMat, 0, 0, 0, mid.x, mid.y, mid.z);
+    brace.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis.normalize());
+    brace.castShadow = true;
+    brace.receiveShadow = true;
+    group.add(brace);
   };
   placePost(pxL, pzF);
   placePost(pxR, pzF);
   placePost(pxR, pzB);
+
+  // Secondary support from the dedicated E support post up to the poly roof corner.
+  const support = getESupportPostLayout(fixedSideLen);
+  if (support.x > x0 && support.x < x1 && support.z > z0 && support.z < z1) {
+    const postTopY = roofTopYAtZ(support.z);
+    const braceStart = new THREE.Vector3(support.x, postTopY, support.z - (support.size * 0.35));
+    const braceEndZ = z1 - 0.015;
+    const braceEnd = new THREE.Vector3(support.x, polyBottomAtZ(braceEndZ), braceEndZ);
+    placeBrace(braceStart, braceEnd, 0.06);
+  }
 }
 
 // Build a flat slab from 8 corners (top 4 then bottom 4, wound CCW from above)
@@ -1975,12 +2237,16 @@ function makeSolidSlab(mat, v) {
 let adjPivot = null;
 
 function buildAdjPanel(group, adjLen, fixedSideLen) {
-  // Kick — vertical panel at x=0, facing into room (+X), spanning z: fixedSideLen → D
+  const support = getESupportPostLayout(fixedSideLen);
+  const eStartZ = support.eStartZ;
+  const eEndZ = Math.min(fixedSideLen + adjLen, support.eEndZ);
+  const eLen = THREE.MathUtils.clamp(eEndZ - eStartZ, 0.05, Math.max(0.05, adjLen));
+  // Kick — vertical panel at x=0, facing into room (+X), spanning from A to the E support post.
   // Same orientation as wall A's kick: rotate Y=-PI/2 to face +X, positioned at x=0
   const kickGroup = new THREE.Group();
-  kickGroup.position.set(0, 0, fixedSideLen + adjLen/2);
+  kickGroup.position.set(0, 0, eStartZ + eLen/2);
   kickGroup.rotation.y = -Math.PI/2; // face toward +X (into room), same as wall A
-  const kickGeo = new THREE.PlaneGeometry(adjLen, KICK);
+  const kickGeo = new THREE.PlaneGeometry(eLen, KICK);
   kickGeo.translate(0, KICK/2, 0);
   // Mirror U so E kick texture orientation matches the requested wall direction.
   const kickUv = kickGeo.getAttribute('uv');
@@ -1991,11 +2257,22 @@ function buildAdjPanel(group, adjLen, fixedSideLen) {
   kickGroup.add(kickMesh);
   group.add(kickGroup);
   registerSectionHover(kickMesh, sectionInfo('E', 'Kick', 0, KICK, 0));
+  const eKickDepthShell = box(
+    WALL_KICK_STRUCTURAL_DEPTH,
+    KICK,
+    eLen,
+    getWallMat('E', 'kick'),
+    0, 0, 0,
+    -((WALL_KICK_STRUCTURAL_DEPTH * 0.5) + WALL_KICK_STRUCTURAL_GAP),
+    KICK * 0.5,
+    eStartZ + (eLen * 0.5)
+  );
+  group.add(eKickDepthShell);
   // Pivot group at top of kick
   adjPivot = new THREE.Group();
-  adjPivot.position.set(0, KICK, fixedSideLen);
+  adjPivot.position.set(0, KICK, eStartZ);
   const panelH = H_adj - KICK;
-  const adjPanel = box(thick, panelH, adjLen, adjMat, 0,0,0, 0, panelH/2, adjLen/2);
+  const adjPanel = box(thick, panelH, eLen, adjMat, 0,0,0, 0, panelH/2, eLen/2);
   adjPanel.add(new THREE.LineSegments(new THREE.EdgesGeometry(adjPanel.geometry),
     new THREE.LineBasicMaterial({ color: 0xffaa55 })));
   adjPivot.add(adjPanel);
@@ -2009,7 +2286,7 @@ function buildAdjPanel(group, adjLen, fixedSideLen) {
     normalOffset: 0.012,
   });
   // E height dim
-  addDimLocal(adjPivot, adjLen, panelH);
+  addDimLocal(adjPivot, eLen, panelH);
   group.add(adjPivot);
   setAdjAngle(wallState.eAngle);
 }
