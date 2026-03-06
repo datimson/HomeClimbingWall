@@ -282,7 +282,7 @@ let texturesEnabled = (() => {
 texturedWallsEnabled = texturesEnabled;
 crashMatTextureEnabled = texturesEnabled;
 
-function isPointOnCrashMat(x, z) {
+function isPointOnCrashMat(x, z, margin=0) {
   if (!crashMatsEnabled) return false;
   if (!Number.isFinite(x) || !Number.isFinite(z)) return true;
 
@@ -291,17 +291,18 @@ function isPointOnCrashMat(x, z) {
   const edgeExtension = 0.50;
   const f1Width = THREE.MathUtils.clamp(Number(wallState?.f1Width) || 0, 0, W);
   const frontStopX = THREE.MathUtils.clamp(W - f1Width, 0, W);
-  const eps = 1e-4;
+  const m = Number(margin) || 0;
+  const eps = 1e-4 + Math.abs(m);
 
   // Main interior 4-pad area.
-  if (x >= -eps && x <= W + eps && z >= -eps && z <= D + eps) return true;
+  if (x >= (-eps - m) && x <= (W + eps + m) && z >= (-eps - m) && z <= (D + eps + m)) return true;
 
   // Front 50 cm extensions.
-  if (x >= -eps && x <= matW + eps && z >= D - eps && z <= D + edgeExtension + eps) return true;
-  if (x >= (matW + seam) - eps && x <= frontStopX + eps && z >= D - eps && z <= D + edgeExtension + eps) return true;
+  if (x >= (-eps - m) && x <= (matW + eps + m) && z >= (D - eps - m) && z <= (D + edgeExtension + eps + m)) return true;
+  if (x >= ((matW + seam) - eps - m) && x <= (frontStopX + eps + m) && z >= (D - eps - m) && z <= (D + edgeExtension + eps + m)) return true;
 
   // Side 50 cm extensions.
-  if (x >= W - eps && x <= W + edgeExtension + eps && z >= -eps && z <= D + eps) return true;
+  if (x >= (W - eps - m) && x <= (W + edgeExtension + eps + m) && z >= (-eps - m) && z <= (D + eps + m)) return true;
 
   return false;
 }
