@@ -210,9 +210,9 @@ const VR_MENU_KNOB_COLOR = 0x2f3338;
 const VR_MENU_TRACK_HOVER_COLOR = 0xb8a17c;
 const VR_MENU_FILL_HOVER_COLOR = 0x8f7450;
 const VR_MENU_KNOB_HOVER_COLOR = 0xf0cf98;
-const VR_MENU_CURSOR_COLOR = 0xffffff;
+const VR_MENU_CURSOR_COLOR = 0x000000;
 const VR_MENU_CURSOR_RADIUS = 0.004;
-const VR_MENU_CURSOR_OFFSET = 0.030;
+const VR_MENU_CURSOR_OFFSET = 0.012;
 const VR_MENU_GRAB_RADIUS_SPEED = 1.20;
 const VR_MENU_DISTANCE = 0.52;
 const VR_MENU_SIDE_OFFSET = 0.18;
@@ -342,21 +342,6 @@ function makeVrMenuCursor() {
       depthWrite: false,
     })
   );
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(VR_MENU_CURSOR_RADIUS * 1.15, VR_MENU_CURSOR_RADIUS * 1.55, 24),
-    new THREE.MeshBasicMaterial({
-      color: 0x1a2a46,
-      transparent: true,
-      opacity: 0.88,
-      side: THREE.DoubleSide,
-      depthTest: false,
-      depthWrite: false,
-    })
-  );
-  ring.position.z = -0.0006;
-  ring.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 3199;
-  ring.frustumCulled = false;
-  cursor.add(ring);
   cursor.visible = false;
   cursor.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 3200;
   cursor.frustumCulled = false;
