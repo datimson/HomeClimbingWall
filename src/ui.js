@@ -253,6 +253,12 @@ const vrMenuMoveWorldPoint = new THREE.Vector3();
 const vrMenuMoveHeadPos = new THREE.Vector3();
 const vrMenuMoveHoriz = new THREE.Vector3();
 const vrMenuCursorToHead = new THREE.Vector3();
+const vrMenuFaceDir = new THREE.Vector3();
+const vrMenuFaceQuat = new THREE.Quaternion();
+const vrMenuBaseNormal = new THREE.Vector3(0, 0, 1);
+const vrMenuCursorOverlayGroup = new THREE.Group();
+vrMenuCursorOverlayGroup.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 950000;
+scene.add(vrMenuCursorOverlayGroup);
 
 function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
   const canvas = document.createElement('canvas');
@@ -324,7 +330,7 @@ function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
   m.renderOrder = 2100;
   const txt = makeVrTextPlane(label, width * 0.82, height * 0.60, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 62,
+    fontPx: 64,
     fontWeight: '700',
   });
   txt.position.z = 0.004;
@@ -412,6 +418,15 @@ function setVrMenuCloseHover(active=false) {
   const closeBtn = vrQuickMenu.closeBtn;
   const mat = closeBtn?.material;
   if (mat?.color) mat.color.setHex(hovered ? VR_MENU_CLOSE_HOVER_COLOR : VR_MENU_CLOSE_COLOR);
+}
+
+function orientVrMenuTowardWorldPoint(worldPoint) {
+  if (!vrQuickMenu.group || !worldPoint) return;
+  vrMenuFaceDir.copy(worldPoint).sub(vrQuickMenu.group.position);
+  if (vrMenuFaceDir.lengthSq() < 1e-10) return;
+  vrMenuFaceDir.normalize();
+  vrMenuFaceQuat.setFromUnitVectors(vrMenuBaseNormal, vrMenuFaceDir);
+  vrQuickMenu.group.quaternion.copy(vrMenuFaceQuat);
 }
 
 function quantizeVrSliderValue(def, value) {
@@ -565,8 +580,7 @@ function placeVrQuickMenuDashboard() {
     scene.add(vrQuickMenu.group);
   }
   vrQuickMenu.group.position.copy(pos);
-  const yaw = Math.atan2(fwd.x, fwd.z);
-  vrQuickMenu.group.rotation.set(0, yaw + Math.PI, 0);
+  orientVrMenuTowardWorldPoint(camPos);
   vrQuickMenu.group.scale.set(VR_MENU_SCALE, VR_MENU_SCALE, VR_MENU_SCALE);
   vrQuickMenu.group.updateMatrixWorld(true);
 }
@@ -609,7 +623,7 @@ function buildVrQuickMenu(target) {
   const titleWidth = Math.max(0.22, innerWidth - closeW - closeGap);
   const title = makeVrTextPlane(vrMenuTitleForTarget(target), titleWidth, 0.09, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 42,
+    fontPx: 44,
     fontWeight: '700',
     align: 'left',
     padding: 20,
@@ -642,7 +656,7 @@ function buildVrQuickMenu(target) {
 
       const label = makeVrTextPlane(def.label, labelW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 40,
+        fontPx: 42,
         fontWeight: '700',
         align: 'left',
         padding: 18,
@@ -700,7 +714,7 @@ function buildVrQuickMenu(target) {
 
       const valueLabel = makeVrTextPlane(def.fmt(v), valueW, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 39,
+        fontPx: 41,
         fontWeight: '700',
         align: 'right',
         padding: 18,
@@ -718,7 +732,7 @@ function buildVrQuickMenu(target) {
   } else {
     const msg = makeVrTextPlane('No adjustable sliders', 0.58, 0.10, {
       color: VR_MENU_TEXT_DARK_COLOR,
-      fontPx: 48,
+      fontPx: 50,
       fontWeight: '700',
     });
     msg.position.set(0, -0.02, 0.004);
@@ -884,12 +898,7 @@ function updateVrMenuMove(dtSeconds=(1/60)) {
   const nextYOffset = THREE.MathUtils.clamp(vrMenuMove.orbitHeightOffset + yDelta, -0.75, 0.45);
   vrQuickMenu.group.position.y = vrMenuMoveHeadPos.y + nextYOffset;
 
-  const toHeadX = vrMenuMoveHeadPos.x - vrQuickMenu.group.position.x;
-  const toHeadZ = vrMenuMoveHeadPos.z - vrQuickMenu.group.position.z;
-  const yaw = Number.isFinite(toHeadX) && Number.isFinite(toHeadZ)
-    ? Math.atan2(toHeadX, toHeadZ)
-    : 0;
-  vrQuickMenu.group.rotation.set(0, yaw, 0);
+  orientVrMenuTowardWorldPoint(vrMenuMoveHeadPos);
   vrQuickMenu.group.updateMatrixWorld(true);
 }
 
@@ -1230,7 +1239,7 @@ function ensureVrControllers() {
     const rayLine = makeVrControllerRay();
     const menuCursor = makeVrMenuCursor();
     controller.add(rayLine);
-    scene.add(menuCursor);
+    vrMenuCursorOverlayGroup.add(menuCursor);
     let controllerVisual = null;
     if (xrControllerModelFactory) {
       controllerVisual = xrControllerModelFactory.createControllerModel(controllerGrip);
