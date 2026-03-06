@@ -282,8 +282,34 @@ let texturesEnabled = (() => {
 texturedWallsEnabled = texturesEnabled;
 crashMatTextureEnabled = texturesEnabled;
 
-function getActiveFloorY() {
-  return crashMatsEnabled ? CRASH_MAT_THICKNESS : 0;
+function isPointOnCrashMat(x, z) {
+  if (!crashMatsEnabled) return false;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return true;
+
+  const seam = 0.02;
+  const matW = (W - seam) * 0.5;
+  const edgeExtension = 0.50;
+  const f1Width = THREE.MathUtils.clamp(Number(wallState?.f1Width) || 0, 0, W);
+  const frontStopX = THREE.MathUtils.clamp(W - f1Width, 0, W);
+  const eps = 1e-4;
+
+  // Main interior 4-pad area.
+  if (x >= -eps && x <= W + eps && z >= -eps && z <= D + eps) return true;
+
+  // Front 50 cm extensions.
+  if (x >= -eps && x <= matW + eps && z >= D - eps && z <= D + edgeExtension + eps) return true;
+  if (x >= (matW + seam) - eps && x <= frontStopX + eps && z >= D - eps && z <= D + edgeExtension + eps) return true;
+
+  // Side 50 cm extensions.
+  if (x >= W - eps && x <= W + edgeExtension + eps && z >= -eps && z <= D + eps) return true;
+
+  return false;
+}
+
+function getActiveFloorY(x=null, z=null) {
+  if (!crashMatsEnabled) return 0;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return CRASH_MAT_THICKNESS;
+  return isPointOnCrashMat(x, z) ? CRASH_MAT_THICKNESS : 0;
 }
 
 function updateScalePersonFloorOffset() {

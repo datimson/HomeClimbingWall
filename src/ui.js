@@ -44,20 +44,28 @@ function persistCurrentCameraState() {
 
 const XR_FLOOR_EYE_HEIGHT = 1.72;
 const XR_MOVE_SPEED_MPS = 1.9;
+const XR_FLY_SPEED_MPS = 1.7;
 const XR_STICK_DEADZONE = 0.16;
+const XR_STICK_CLICK_BUTTON_INDEX = 3;
 const XR_TELEPORT_MAX_DISTANCE = 20;
 const XR_TELEPORT_SURFACE_EPS = 0.012;
 const XR_RAY_COLOR_IDLE = 0xb8dfff;
 const XR_RAY_COLOR_TELEPORT = 0x4dc7ff;
 const XR_RAY_COLOR_INTERACTIVE = 0xffc86a;
+const XR_MOVE_MODE = Object.freeze({
+  GROUNDED: 'grounded',
+  FLY: 'fly',
+});
 const XR_SESSION_OPTIONS = Object.freeze({
   optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
 });
 let xrSessionActive = false;
 let xrRestoreCameraState = null;
+let xrEntryStartPos = null;
 let xrSupportChecked = false;
 let xrSupported = false;
 let xrSessionRequestInFlight = false;
+let xrMoveMode = XR_MOVE_MODE.GROUNDED;
 const xrControllers = [];
 let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
@@ -72,6 +80,7 @@ const xrRayPlane = new THREE.Plane();
 const xrRay = new THREE.Ray();
 const xrRayMatrix = new THREE.Matrix4();
 const xrRaycaster = new THREE.Raycaster();
+const xrStartWorld = new THREE.Vector3();
 const eSweepAnim = {
   active: false,
   speedDegPerSec: 16,
@@ -211,6 +220,7 @@ function updateVrControllerConnection(state, connected, data=null) {
   state.inputSource = data || null;
   state.interactiveHit = null;
   state.floorHit = null;
+  state.stickPressedLast = false;
   if (state.rayLine) state.rayLine.visible = xrSessionActive && state.connected;
 }
 
@@ -230,6 +240,7 @@ function ensureVrControllers() {
       inputSource: null,
       interactiveHit: null,
       floorHit: null,
+      stickPressedLast: false,
     };
     controller.addEventListener('connected', ev => {
       updateVrControllerConnection(state, true, ev?.data || null);
@@ -238,7 +249,7 @@ function ensureVrControllers() {
       updateVrControllerConnection(state, false, null);
     });
     controller.addEventListener('selectend', onVrControllerSelectEnd);
-    scene.add(controller);
+    xrRig.add(controller);
     xrControllers.push(state);
   };
   makeState(0);
@@ -264,7 +275,8 @@ function getVrInteractiveHit() {
 
 function getVrFloorHit(maxDistance=XR_TELEPORT_MAX_DISTANCE) {
   const maxDist = THREE.MathUtils.clamp(Number(maxDistance) || XR_TELEPORT_MAX_DISTANCE, 0.06, XR_TELEPORT_MAX_DISTANCE);
-  xrRayPlane.set(xrUp, -getActiveFloorY());
+  // Intersect a base horizontal plane; final standing height is resolved from x/z.
+  xrRayPlane.set(xrUp, 0);
   xrRay.origin.copy(xrRayOrigin);
   xrRay.direction.copy(xrRayDir);
   const hit = xrRay.intersectPlane(xrRayPlane, xrRaycastHit);
@@ -277,14 +289,58 @@ function getVrFloorHit(maxDistance=XR_TELEPORT_MAX_DISTANCE) {
 function teleportVrTo(targetPoint) {
   if (!xrSessionActive || !targetPoint) return false;
   const xrCam = renderer.xr.getCamera(camera);
+  xrCam.updateMatrixWorld(true);
   xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
+  const floorY = getActiveFloorY(targetPoint.x, targetPoint.z);
+  const desiredHeadY = floorY + XR_FLOOR_EYE_HEIGHT;
   xrRig.position.x += targetPoint.x - xrHeadWorld.x;
   xrRig.position.z += targetPoint.z - xrHeadWorld.z;
-  xrRig.position.y = getActiveFloorY() + XR_FLOOR_EYE_HEIGHT;
+  xrRig.position.y += desiredHeadY - xrHeadWorld.y;
   targetX = xrRig.position.x;
   targetY = xrRig.position.y;
   targetZ = xrRig.position.z;
   return true;
+}
+
+function captureVrStartPosition() {
+  camera.updateMatrixWorld(true);
+  camera.getWorldPosition(xrStartWorld);
+  xrEntryStartPos = {
+    x: xrStartWorld.x,
+    z: xrStartWorld.z,
+  };
+}
+
+function toggleVrMoveMode() {
+  xrMoveMode = (xrMoveMode === XR_MOVE_MODE.GROUNDED) ? XR_MOVE_MODE.FLY : XR_MOVE_MODE.GROUNDED;
+  if (xrMoveMode !== XR_MOVE_MODE.GROUNDED || !xrSessionActive) return;
+  const xrCam = renderer.xr.getCamera(camera);
+  xrCam.updateMatrixWorld(true);
+  xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
+  const floorY = getActiveFloorY(xrHeadWorld.x, xrHeadWorld.z);
+  const desiredHeadY = floorY + XR_FLOOR_EYE_HEIGHT;
+  xrRig.position.y += desiredHeadY - xrHeadWorld.y;
+}
+
+function updateVrMoveModeToggle() {
+  let toggleRequested = false;
+  xrControllers.forEach(state => {
+    const pressed = !!state?.inputSource?.gamepad?.buttons?.[XR_STICK_CLICK_BUTTON_INDEX]?.pressed;
+    if (pressed && !state.stickPressedLast) toggleRequested = true;
+    state.stickPressedLast = pressed;
+  });
+  if (toggleRequested) toggleVrMoveMode();
+}
+
+function snapVrRigToFloor(xrCam) {
+  if (!xrCam) return;
+  xrCam.updateMatrixWorld(true);
+  xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
+  const floorY = getActiveFloorY(xrHeadWorld.x, xrHeadWorld.z);
+  const desiredHeadY = floorY + XR_FLOOR_EYE_HEIGHT;
+  if (Math.abs(desiredHeadY - xrHeadWorld.y) > 1e-4) {
+    xrRig.position.y += desiredHeadY - xrHeadWorld.y;
+  }
 }
 
 function toggleEWallSweep() {
@@ -369,7 +425,7 @@ function updateVrControllerPointers() {
   if (bestTeleport) {
     xrTeleportMarker.visible = true;
     xrTeleportMarker.position.copy(bestTeleport);
-    xrTeleportMarker.position.y = getActiveFloorY() + XR_TELEPORT_SURFACE_EPS;
+    xrTeleportMarker.position.y = getActiveFloorY(bestTeleport.x, bestTeleport.z) + XR_TELEPORT_SURFACE_EPS;
   } else {
     xrTeleportMarker.visible = false;
   }
@@ -380,14 +436,31 @@ function beginVrSession() {
   hideHoverInfo();
   if (!xrRestoreCameraState) xrRestoreCameraState = {...getCurrentCameraState()};
 
+  let startX = W * 0.5;
+  let startZ = D * 0.72;
+  if (xrEntryStartPos && Number.isFinite(xrEntryStartPos.x) && Number.isFinite(xrEntryStartPos.z)) {
+    startX = xrEntryStartPos.x;
+    startZ = xrEntryStartPos.z;
+  } else {
+    camera.updateMatrixWorld(true);
+    camera.getWorldPosition(xrStartWorld);
+    if (Number.isFinite(xrStartWorld.x)) startX = xrStartWorld.x;
+    if (Number.isFinite(xrStartWorld.z)) startZ = xrStartWorld.z;
+  }
+  const startFloorY = getActiveFloorY(startX, startZ);
+
   theta = 0;
   phi = Math.PI * 0.5;
   radius = 0.001;
-  targetX = W * 0.5;
-  targetY = getActiveFloorY() + XR_FLOOR_EYE_HEIGHT;
-  targetZ = D * 0.72;
+  targetX = startX;
+  targetY = startFloorY + XR_FLOOR_EYE_HEIGHT;
+  targetZ = startZ;
   xrRig.position.set(targetX, targetY, targetZ);
   xrRig.rotation.set(0, 0, 0);
+  camera.position.set(0, 0, 0);
+  camera.rotation.set(0, 0, 0);
+  xrMoveMode = XR_MOVE_MODE.GROUNDED;
+  xrEntryStartPos = null;
   eSweepAnim.active = false;
   rigToggleAnim.targetDeg = null;
   rigToggleAnim.lastRebuildDeg = NaN;
@@ -395,6 +468,7 @@ function beginVrSession() {
   xrControllers.forEach(state => {
     state.interactiveHit = null;
     state.floorHit = null;
+    state.stickPressedLast = false;
     if (state.rayLine) state.rayLine.visible = !!state.connected;
   });
 }
@@ -405,11 +479,14 @@ function endVrSession() {
   xrControllers.forEach(state => {
     state.interactiveHit = null;
     state.floorHit = null;
+    state.stickPressedLast = false;
     if (state.rayLine) state.rayLine.visible = false;
   });
   eSweepAnim.active = false;
   rigToggleAnim.targetDeg = null;
   rigToggleAnim.lastRebuildDeg = NaN;
+  xrMoveMode = XR_MOVE_MODE.GROUNDED;
+  xrEntryStartPos = null;
   xrRig.position.set(0, 0, 0);
   xrRig.rotation.set(0, 0, 0);
   if (xrRestoreCameraState) {
@@ -447,6 +524,7 @@ function setupWebXR() {
         if (active) await active.end();
         return;
       }
+      captureVrStartPosition();
       const session = await navigator.xr.requestSession('immersive-vr', XR_SESSION_OPTIONS);
       await renderer.xr.setSession(session);
     } catch (err) {
@@ -463,9 +541,10 @@ function updateVrLocomotion(dtSeconds) {
   const session = renderer.xr.getSession();
   if (!session) return;
   const dt = THREE.MathUtils.clamp(Number(dtSeconds) || (1 / 60), 0.001, 0.05);
+  const xrCam = renderer.xr.getCamera(camera);
 
-  const desiredY = getActiveFloorY() + XR_FLOOR_EYE_HEIGHT;
-  if (Math.abs(xrRig.position.y - desiredY) > 1e-6) xrRig.position.y = desiredY;
+  updateVrMoveModeToggle();
+  if (xrMoveMode === XR_MOVE_MODE.GROUNDED) snapVrRigToFloor(xrCam);
 
   const axes = getVrMoveAxes(session);
   const moveX = applyStickDeadzone(axes.x);
@@ -477,25 +556,36 @@ function updateVrLocomotion(dtSeconds) {
     return;
   }
 
-  const xrCam = renderer.xr.getCamera(camera);
   xrCam.getWorldDirection(xrForward);
-  xrForward.y = 0;
-  if (xrForward.lengthSq() < 1e-8) xrForward.set(0, 0, -1);
-  else xrForward.normalize();
-
-  xrRight.crossVectors(xrForward, xrUp);
-  if (xrRight.lengthSq() < 1e-8) xrRight.set(1, 0, 0);
-  else xrRight.normalize();
+  if (xrMoveMode === XR_MOVE_MODE.GROUNDED) {
+    xrForward.y = 0;
+    if (xrForward.lengthSq() < 1e-8) xrForward.set(0, 0, -1);
+    else xrForward.normalize();
+    xrRight.crossVectors(xrForward, xrUp);
+    if (xrRight.lengthSq() < 1e-8) xrRight.set(1, 0, 0);
+    else xrRight.normalize();
+  } else {
+    if (xrForward.lengthSq() < 1e-8) xrForward.set(0, 0, -1);
+    else xrForward.normalize();
+    xrRight.setFromMatrixColumn(xrCam.matrixWorld, 0);
+    if (xrRight.lengthSq() < 1e-8) xrRight.set(1, 0, 0);
+    else xrRight.normalize();
+  }
 
   xrMoveDelta.set(0, 0, 0);
   xrMoveDelta.addScaledVector(xrRight, moveX);
   xrMoveDelta.addScaledVector(xrForward, -moveY);
   const moveLen = xrMoveDelta.length();
   if (moveLen > 1) xrMoveDelta.multiplyScalar(1 / moveLen);
-  xrMoveDelta.multiplyScalar(XR_MOVE_SPEED_MPS * dt);
+  const moveSpeed = (xrMoveMode === XR_MOVE_MODE.FLY) ? XR_FLY_SPEED_MPS : XR_MOVE_SPEED_MPS;
+  xrMoveDelta.multiplyScalar(moveSpeed * dt);
 
   xrRig.position.x += xrMoveDelta.x;
+  if (xrMoveMode === XR_MOVE_MODE.FLY) {
+    xrRig.position.y += xrMoveDelta.y;
+  }
   xrRig.position.z += xrMoveDelta.z;
+  if (xrMoveMode === XR_MOVE_MODE.GROUNDED) snapVrRigToFloor(xrCam);
   targetX = xrRig.position.x;
   targetY = xrRig.position.y;
   targetZ = xrRig.position.z;
