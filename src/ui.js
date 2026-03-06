@@ -75,6 +75,8 @@ let xrMoveMode = XR_MOVE_MODE.GROUNDED;
 let xrGroundFloorY = 0;
 let xrActiveControllerIndex = 0;
 let xrNeedsGroundSnap = false;
+let xrStandingEyeHeight = XR_FLOOR_EYE_HEIGHT;
+let xrCaptureStandingEyeHeight = false;
 const xrControllers = [];
 let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
@@ -179,9 +181,10 @@ const VR_MENU_TEXT_DARK_COLOR = '#21262b';
 const VR_MENU_TRACK_COLOR = 0x9aa5b0;
 const VR_MENU_FILL_COLOR = 0x5f7183;
 const VR_MENU_KNOB_COLOR = 0x2f3338;
-const VR_MENU_PANEL_DISTANCE = 0.90;
-const VR_MENU_SIDE_OFFSET = 0.44;
-const VR_MENU_DOWN_OFFSET = -0.34;
+const VR_MENU_LOCAL_X = 0.36;
+const VR_MENU_LOCAL_Y = -0.34;
+const VR_MENU_LOCAL_Z = -0.82;
+const VR_MENU_SCALE = 0.82;
 
 const vrQuickMenu = {
   group: null,
@@ -326,7 +329,8 @@ function clearVrQuickMenu() {
     vrQuickMenu.open = false;
     return;
   }
-  scene.remove(vrQuickMenu.group);
+  if (vrQuickMenu.group.parent) vrQuickMenu.group.parent.remove(vrQuickMenu.group);
+  else scene.remove(vrQuickMenu.group);
   vrQuickMenu.group.traverse(obj => {
     if (obj.geometry && typeof obj.geometry.dispose === 'function') obj.geometry.dispose();
     const mats = Array.isArray(obj.material) ? obj.material : (obj.material ? [obj.material] : []);
@@ -385,25 +389,14 @@ function applyVrMenuStateKey(key, nextValue) {
 
 function placeVrQuickMenuDashboard() {
   if (!vrQuickMenu.group) return;
-  const xrCam = renderer.xr.getCamera(camera);
-  xrCam.updateMatrixWorld(true);
-  const camPos = new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld);
-  const fwd = new THREE.Vector3();
-  xrCam.getWorldDirection(fwd);
-  fwd.y = 0;
-  if (fwd.lengthSq() < 1e-8) fwd.set(0, 0, -1);
-  else fwd.normalize();
-  const right = new THREE.Vector3().crossVectors(fwd, xrUp);
-  if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
-  else right.normalize();
-
-  const pos = camPos.clone()
-    .add(fwd.multiplyScalar(VR_MENU_PANEL_DISTANCE))
-    .add(right.multiplyScalar(VR_MENU_SIDE_OFFSET));
-  pos.y += VR_MENU_DOWN_OFFSET;
-  vrQuickMenu.group.position.copy(pos);
-  const yaw = Math.atan2(fwd.x, fwd.z);
-  vrQuickMenu.group.rotation.set(0, yaw + Math.PI, 0);
+  if (vrQuickMenu.group.parent !== camera) {
+    if (vrQuickMenu.group.parent) vrQuickMenu.group.parent.remove(vrQuickMenu.group);
+    camera.add(vrQuickMenu.group);
+  }
+  vrQuickMenu.group.position.set(VR_MENU_LOCAL_X, VR_MENU_LOCAL_Y, VR_MENU_LOCAL_Z);
+  vrQuickMenu.group.rotation.set(0, 0, 0);
+  vrQuickMenu.group.scale.set(VR_MENU_SCALE, VR_MENU_SCALE, VR_MENU_SCALE);
+  vrQuickMenu.group.updateMatrixWorld(true);
 }
 
 function buildVrQuickMenu(target) {
@@ -411,10 +404,10 @@ function buildVrQuickMenu(target) {
   if (!keys) return false;
   clearVrQuickMenu();
 
-  const width = 1.26;
-  const rowH = 0.13;
+  const width = 1.02;
+  const rowH = 0.11;
   const hasRows = keys.length > 0;
-  const height = hasRows ? (0.25 + keys.length * rowH) : 0.34;
+  const height = hasRows ? (0.22 + keys.length * rowH) : 0.30;
 
   const group = new THREE.Group();
   group.renderOrder = 2090;
@@ -432,39 +425,39 @@ function buildVrQuickMenu(target) {
   bg.renderOrder = 2090;
   group.add(bg);
 
-  const title = makeVrTextPlane(vrMenuTitleForTarget(target), 0.70, 0.11, {
+  const title = makeVrTextPlane(vrMenuTitleForTarget(target), 0.58, 0.10, {
     color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 44,
+    fontPx: 38,
     fontWeight: '700',
   });
-  title.position.set(0, (height * 0.5) - 0.07, 0.004);
+  title.position.set(0, (height * 0.5) - 0.06, 0.004);
   group.add(title);
 
-  const closeBtn = makeVrMenuButton('Close', 0.18, 0.07, 0xbac2ca);
-  closeBtn.position.set((width * 0.5) - 0.14, (height * 0.5) - 0.07, 0.003);
+  const closeBtn = makeVrMenuButton('Close', 0.15, 0.065, 0xbac2ca);
+  closeBtn.position.set((width * 0.5) - 0.11, (height * 0.5) - 0.06, 0.003);
   closeBtn.userData.vrMenuAction = {type: 'close'};
   group.add(closeBtn);
 
   const interactive = [closeBtn];
   const slidersByKey = {};
   if (hasRows) {
-    const trackW = 0.46;
-    const trackH = 0.036;
-    const trackCenterX = 0.14;
-    const leftLabelX = -0.46;
-    const valueX = 0.48;
+    const trackW = 0.34;
+    const trackH = 0.032;
+    const trackCenterX = 0.08;
+    const leftLabelX = -0.37;
+    const valueX = 0.35;
     keys.forEach((key, idx) => {
       const def = VR_MENU_SLIDERS[key];
       if (!def) return;
       const v = quantizeVrSliderValue(def, Number(wallState[key]) || def.min);
-      const y = (height * 0.5) - 0.17 - idx * rowH;
+      const y = (height * 0.5) - 0.14 - idx * rowH;
 
-      const label = makeVrTextPlane(def.label, 0.40, 0.08, {
+      const label = makeVrTextPlane(def.label, 0.30, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 36,
+        fontPx: 30,
         fontWeight: '700',
         align: 'left',
-        padding: 14,
+        padding: 10,
       });
       label.position.set(leftLabelX, y, 0.004);
       group.add(label);
@@ -502,7 +495,7 @@ function buildVrQuickMenu(target) {
       group.add(fill);
 
       const knob = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.032, 0.075),
+        new THREE.PlaneGeometry(0.028, 0.062),
         new THREE.MeshBasicMaterial({
           color: VR_MENU_KNOB_COLOR,
           transparent: false,
@@ -517,12 +510,12 @@ function buildVrQuickMenu(target) {
       knob.userData.vrMenuAction = {type: 'sliderTrack', key};
       group.add(knob);
 
-      const valueLabel = makeVrTextPlane(def.fmt(v), 0.22, 0.08, {
+      const valueLabel = makeVrTextPlane(def.fmt(v), 0.18, 0.07, {
         color: VR_MENU_TEXT_DARK_COLOR,
-        fontPx: 34,
+        fontPx: 28,
         fontWeight: '700',
         align: 'right',
-        padding: 14,
+        padding: 10,
       });
       valueLabel.position.set(valueX, y, 0.004);
       group.add(valueLabel);
@@ -790,10 +783,8 @@ function applyControllerVisualOpacity(root, alpha=XR_CONTROLLER_VISUAL_OPACITY) 
   return foundMesh;
 }
 
-function getXrPoseEyeHeight(xrCam) {
-  const poseY = Math.abs(Number(xrCam?.position?.y) || 0);
-  if (poseY > 0.2) return THREE.MathUtils.clamp(poseY, XR_MIN_EYE_HEIGHT, XR_MAX_EYE_HEIGHT);
-  return XR_FLOOR_EYE_HEIGHT;
+function getXrStandingEyeHeight() {
+  return THREE.MathUtils.clamp(Number(xrStandingEyeHeight) || XR_FLOOR_EYE_HEIGHT, XR_MIN_EYE_HEIGHT, XR_MAX_EYE_HEIGHT);
 }
 
 function loadQuestControllerModelTemplate(side) {
@@ -1005,13 +996,10 @@ function teleportVrTo(targetPoint) {
   const floorY = getActiveFloorY(targetPoint.x, targetPoint.z);
   xrRig.position.x += targetPoint.x - xrHeadWorld.x;
   xrRig.position.z += targetPoint.z - xrHeadWorld.z;
-  if (xrMoveMode === XR_MOVE_MODE.GROUNDED) {
-    const eyeH = getXrPoseEyeHeight(xrCam);
-    const desiredHeadY = floorY + eyeH;
-    xrRig.position.y += desiredHeadY - xrHeadWorld.y;
-    xrGroundFloorY = floorY;
-    xrNeedsGroundSnap = false;
-  }
+  const desiredHeadY = floorY + getXrStandingEyeHeight();
+  xrRig.position.y += desiredHeadY - xrHeadWorld.y;
+  xrGroundFloorY = floorY;
+  xrNeedsGroundSnap = false;
   targetX = xrRig.position.x;
   targetY = xrRig.position.y;
   targetZ = xrRig.position.z;
@@ -1047,10 +1035,17 @@ function updateGroundFloorFromHead(xrCam, sticky=true) {
   xrCam.updateMatrixWorld(true);
   xrHeadWorld.setFromMatrixPosition(xrCam.matrixWorld);
   const nextFloorY = sticky ? getStickyGroundFloorY(xrHeadWorld.x, xrHeadWorld.z) : getActiveFloorY(xrHeadWorld.x, xrHeadWorld.z);
+
+  if (xrCaptureStandingEyeHeight) {
+    const measured = xrHeadWorld.y - nextFloorY;
+    if (Number.isFinite(measured) && measured >= XR_MIN_EYE_HEIGHT && measured <= XR_MAX_EYE_HEIGHT) {
+      xrStandingEyeHeight = measured;
+      xrCaptureStandingEyeHeight = false;
+    }
+  }
   const floorChanged = Math.abs(nextFloorY - xrGroundFloorY) > 1e-5;
   if (floorChanged || xrNeedsGroundSnap) {
-    const eyeH = getXrPoseEyeHeight(xrCam);
-    const desiredHeadY = nextFloorY + eyeH;
+    const desiredHeadY = nextFloorY + getXrStandingEyeHeight();
     const headDelta = desiredHeadY - xrHeadWorld.y;
     if (Math.abs(headDelta) > 1e-5) xrRig.position.y += headDelta;
     xrGroundFloorY = nextFloorY;
@@ -1223,6 +1218,8 @@ function beginVrSession() {
   xrMoveMode = XR_MOVE_MODE.GROUNDED;
   xrGroundFloorY = startFloorY;
   xrNeedsGroundSnap = true;
+  xrStandingEyeHeight = XR_FLOOR_EYE_HEIGHT;
+  xrCaptureStandingEyeHeight = true;
   xrNeedsYawAlignment = !!xrEntryForward;
   xrActiveControllerIndex = 0;
   xrEntryStartPos = null;
@@ -1260,6 +1257,8 @@ function endVrSession() {
   xrMoveMode = XR_MOVE_MODE.GROUNDED;
   xrGroundFloorY = 0;
   xrNeedsGroundSnap = false;
+  xrStandingEyeHeight = XR_FLOOR_EYE_HEIGHT;
+  xrCaptureStandingEyeHeight = false;
   xrNeedsYawAlignment = false;
   xrActiveControllerIndex = 0;
   xrEntryStartPos = null;
