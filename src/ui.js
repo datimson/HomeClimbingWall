@@ -30,15 +30,7 @@ let dimsAreFaded = false;
 let sceneIsFaded = false;
 let focusedMaterialEntries = [];
 let activeFocusMesh = null;
-const measureRaycaster = new THREE.Raycaster();
-const measureMouse = new THREE.Vector2();
-const measureScratchVec = new THREE.Vector3();
-const measureScratchA = new THREE.Vector3();
-const measureScratchB = new THREE.Vector3();
-const measureScratchC = new THREE.Vector3();
-const measureOverlayGroup = new THREE.Group();
-measureOverlayGroup.name = 'measureOverlay';
-scene.add(measureOverlayGroup);
+let measurementTool = null;
 const personLookAtTarget = new THREE.Vector3();
 const xrRig = new THREE.Group();
 xrRig.name = 'xrRig';
@@ -64,42 +56,40 @@ function persistCurrentCameraState() {
   return saveCameraState(getCurrentCameraState());
 }
 
-const REBUILD_THROTTLE_MS = 40;
-let queuedRebuildTimer = 0;
-let lastRebuildAt = 0;
-const UI_REBUILD_STAGE = Object.freeze({
-  GEOMETRY: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.GEOMETRY) ? REBUILD_STAGE.GEOMETRY : 'geometry',
-  ANNOTATIONS: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.ANNOTATIONS) ? REBUILD_STAGE.ANNOTATIONS : 'annotations',
-  CRASH_MATS: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.CRASH_MATS) ? REBUILD_STAGE.CRASH_MATS : 'crashMats',
-});
-function requestRebuild({immediate=false, stages=null} = {}) {
-  if (typeof rebuild !== 'function') return;
-  if (typeof invalidateRebuildStages === 'function') {
-    if (Array.isArray(stages) && stages.length) invalidateRebuildStages(stages);
-    else invalidateRebuildStages();
+const REBUILD_SCHEDULER_MODULE = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallRebuildScheduler
+) ? window.ClimbingWallRebuildScheduler : null;
+const rebuildScheduler = (
+  REBUILD_SCHEDULER_MODULE &&
+  typeof REBUILD_SCHEDULER_MODULE.createRebuildScheduler === 'function'
+) ? REBUILD_SCHEDULER_MODULE.createRebuildScheduler({
+  rebuildFn: (typeof rebuild === 'function') ? rebuild : null,
+  invalidateFn: (typeof invalidateRebuildStages === 'function') ? invalidateRebuildStages : null,
+  syncFn: (typeof window?.syncAppStateFromCore === 'function') ? window.syncAppStateFromCore : null,
+  throttleMs: 40,
+}) : null;
+const UI_REBUILD_STAGE = Object.freeze(
+  (rebuildScheduler && rebuildScheduler.stages) || {
+    GEOMETRY: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.GEOMETRY) ? REBUILD_STAGE.GEOMETRY : 'geometry',
+    ANNOTATIONS: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.ANNOTATIONS) ? REBUILD_STAGE.ANNOTATIONS : 'annotations',
+    CRASH_MATS: (typeof REBUILD_STAGE !== 'undefined' && REBUILD_STAGE?.CRASH_MATS) ? REBUILD_STAGE.CRASH_MATS : 'crashMats',
   }
-  const run = () => {
-    lastRebuildAt = performance.now();
-    if (typeof window?.syncAppStateFromCore === 'function') {
-      window.syncAppStateFromCore('ui:requestRebuild');
-    }
-    rebuild({useDirty: true});
-  };
-  if (immediate) {
-    if (queuedRebuildTimer) {
-      clearTimeout(queuedRebuildTimer);
-      queuedRebuildTimer = 0;
-    }
-    run();
+);
+function requestRebuild(options={}) {
+  if (rebuildScheduler && typeof rebuildScheduler.request === 'function') {
+    rebuildScheduler.request(options);
     return;
   }
-  if (queuedRebuildTimer) return;
-  const elapsed = performance.now() - lastRebuildAt;
-  const wait = Math.max(0, REBUILD_THROTTLE_MS - elapsed);
-  queuedRebuildTimer = setTimeout(() => {
-    queuedRebuildTimer = 0;
-    run();
-  }, wait);
+  if (typeof rebuild !== 'function') return;
+  if (typeof invalidateRebuildStages === 'function') {
+    const stages = Array.isArray(options?.stages) ? options.stages : null;
+    if (stages && stages.length) invalidateRebuildStages(stages);
+    else invalidateRebuildStages();
+    rebuild({useDirty: true});
+    return;
+  }
+  rebuild();
 }
 
 const DESIGN_SWITCHER = (
@@ -152,380 +142,30 @@ function switchDesignAndReload(designId) {
   return true;
 }
 
-function getMeasurementStorageKey() {
-  if (RUNTIME_DESIGN_SYSTEM && typeof RUNTIME_DESIGN_SYSTEM.getMeasurementStorageKey === 'function') {
-    return RUNTIME_DESIGN_SYSTEM.getMeasurementStorageKey(getActiveDesignIdSafe());
-  }
-  const active = getActiveDesignIdSafe();
-  if (active === 'classic') return 'climbingWall.measureTool.v1';
-  return `climbingWall.${active}.measureTool.v1`;
-}
+const MEASUREMENT_TOOL_MODULE = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallMeasurementTool
+) ? window.ClimbingWallMeasurementTool : null;
 
-function getMeasurementDefaults() {
-  const fallback = {
-    enabled: false,
-    snapToVertices: true,
-    snapToEdges: true,
-    snapToSurfaces: true,
-    showDeltaAxes: true,
-    units: 'metric',
-  };
-  const planned = RUNTIME_DESIGN_SYSTEM?.measurementToolPlan?.defaults;
-  if (!planned || typeof planned !== 'object') return fallback;
-  return {
-    ...fallback,
-    ...planned,
-  };
-}
-
-const MEASUREMENT_STORAGE_KEY = getMeasurementStorageKey();
-const MEASUREMENT_DEFAULTS = getMeasurementDefaults();
-
-function loadMeasurementSettings() {
-  const out = {...MEASUREMENT_DEFAULTS};
-  if (typeof localStorage === 'undefined') return out;
-  try {
-    const raw = localStorage.getItem(MEASUREMENT_STORAGE_KEY);
-    if (!raw) return out;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return out;
-    if (typeof parsed.enabled === 'boolean') out.enabled = parsed.enabled;
-    if (typeof parsed.snapToVertices === 'boolean') out.snapToVertices = parsed.snapToVertices;
-    if (typeof parsed.snapToEdges === 'boolean') out.snapToEdges = parsed.snapToEdges;
-    if (typeof parsed.snapToSurfaces === 'boolean') out.snapToSurfaces = parsed.snapToSurfaces;
-    if (typeof parsed.showDeltaAxes === 'boolean') out.showDeltaAxes = parsed.showDeltaAxes;
-    if (typeof parsed.units === 'string' && parsed.units) out.units = parsed.units;
-    return out;
-  } catch (_) {
-    return out;
-  }
-}
-
-function saveMeasurementSettings(settings) {
-  if (typeof localStorage === 'undefined') return false;
-  try {
-    localStorage.setItem(MEASUREMENT_STORAGE_KEY, JSON.stringify(settings));
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-const measureTool = {
-  settings: loadMeasurementSettings(),
-  start: null,
-  preview: null,
-  dragging: false,
-  hasDragged: false,
-  startMeta: null,
-  previewMeta: null,
-  segments: [],
-};
-
-function syncMeasurementToAppState(source='ui:measure') {
-  const app = window?.ClimbingWallAppState;
-  if (!app || typeof app.patchState !== 'function') return;
-  app.patchState({
-    tools: {
-      measurement: {
-        ...measureTool.settings,
-        active: !!measureTool.start,
-        segmentCount: measureTool.segments.length,
-      },
+if (MEASUREMENT_TOOL_MODULE && typeof MEASUREMENT_TOOL_MODULE.createMeasurementTool === 'function') {
+  measurementTool = MEASUREMENT_TOOL_MODULE.createMeasurementTool({
+    THREE,
+    scene,
+    renderer,
+    camera,
+    addDim,
+    dimLine3,
+    designSystem: RUNTIME_DESIGN_SYSTEM,
+    getActiveDesignIdSafe,
+    appState: window?.ClimbingWallAppState,
+    getRoots: () => {
+      const roots = [];
+      if (wallGroup) roots.push(wallGroup);
+      if (crashMatsGroup?.visible) roots.push(crashMatsGroup);
+      if (environmentGroup?.visible) roots.push(environmentGroup);
+      return roots;
     },
-  }, {source, emit: true});
-}
-
-function clearMeasureOverlayGroup() {
-  while (measureOverlayGroup.children.length) {
-    const child = measureOverlayGroup.children.pop();
-    measureOverlayGroup.remove(child);
-    child.traverse(obj => {
-      if (obj.geometry && typeof obj.geometry.dispose === 'function') obj.geometry.dispose();
-      const mats = Array.isArray(obj.material) ? obj.material : (obj.material ? [obj.material] : []);
-      mats.forEach(mat => {
-        if (!mat) return;
-        if (mat.map && typeof mat.map.dispose === 'function') mat.map.dispose();
-        if (typeof mat.dispose === 'function') mat.dispose();
-      });
-    });
-  }
-}
-
-function formatMeasureLabel(start, end) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const dz = end.z - start.z;
-  const dist = Math.hypot(dx, dy, dz);
-  return `${dist.toFixed(3)}m`;
-}
-
-function drawMeasureMarker(point, color=0xffaa55, size=0.05) {
-  if (!point) return;
-  const sx = size;
-  const sy = size;
-  const sz = size;
-  measureOverlayGroup.add(dimLine3(
-    new THREE.Vector3(point.x - sx, point.y, point.z),
-    new THREE.Vector3(point.x + sx, point.y, point.z),
-    color
-  ));
-  measureOverlayGroup.add(dimLine3(
-    new THREE.Vector3(point.x, point.y - sy, point.z),
-    new THREE.Vector3(point.x, point.y + sy, point.z),
-    color
-  ));
-  measureOverlayGroup.add(dimLine3(
-    new THREE.Vector3(point.x, point.y, point.z - sz),
-    new THREE.Vector3(point.x, point.y, point.z + sz),
-    color
-  ));
-}
-
-function drawMeasureAxes(start, end) {
-  if (!measureTool.settings.showDeltaAxes) return;
-  const dx = Math.abs(end.x - start.x);
-  const dy = Math.abs(end.y - start.y);
-  const dz = Math.abs(end.z - start.z);
-  const pX = new THREE.Vector3(end.x, start.y, start.z);
-  const pY = new THREE.Vector3(end.x, end.y, start.z);
-  if (dx > 0.01) addDim(measureOverlayGroup, start, pX, `dx ${dx.toFixed(2)}m`, 0xe38585);
-  if (dy > 0.01) addDim(measureOverlayGroup, pX, pY, `dy ${dy.toFixed(2)}m`, 0x8ccf8c);
-  if (dz > 0.01) addDim(measureOverlayGroup, pY, end, `dz ${dz.toFixed(2)}m`, 0x86b7e6);
-}
-
-function renderMeasureOverlay() {
-  clearMeasureOverlayGroup();
-  measureTool.segments.forEach(seg => {
-    addDim(measureOverlayGroup, seg.start, seg.end, formatMeasureLabel(seg.start, seg.end), 0xf4d072);
-    drawMeasureAxes(seg.start, seg.end);
-    drawMeasureMarker(seg.start, 0xf4d072, 0.035);
-    drawMeasureMarker(seg.end, 0xf4d072, 0.035);
   });
-  if (measureTool.start && measureTool.preview) {
-    addDim(measureOverlayGroup, measureTool.start, measureTool.preview, formatMeasureLabel(measureTool.start, measureTool.preview), 0xffb84d);
-    drawMeasureAxes(measureTool.start, measureTool.preview);
-    drawMeasureMarker(measureTool.start, 0xffb84d, 0.045);
-    drawMeasureMarker(measureTool.preview, 0xffb84d, 0.04);
-  } else if (measureTool.start) {
-    drawMeasureMarker(measureTool.start, 0xffb84d, 0.045);
-  }
-}
-
-function clearMeasurements({segments=true, active=true} = {}) {
-  if (segments) measureTool.segments.length = 0;
-  if (active) {
-    measureTool.start = null;
-    measureTool.preview = null;
-    measureTool.startMeta = null;
-    measureTool.previewMeta = null;
-    measureTool.dragging = false;
-    measureTool.hasDragged = false;
-  }
-  renderMeasureOverlay();
-  syncMeasurementToAppState('ui:measure:clear');
-}
-
-function isMeasurementTargetMesh(obj) {
-  if (!obj?.isMesh || !obj.visible || !obj.geometry) return false;
-  if (obj.userData?.isHold) return false;
-  if (obj.userData?.vrMenuAction) return false;
-  if (obj.userData?.sectionInfo || obj.userData?.isCeilingPanel || obj.userData?.context || obj.userData?.isConceptVolume) return true;
-  const box = obj.geometry.boundingBox;
-  if (!box) {
-    obj.geometry.computeBoundingBox();
-  }
-  const bb = obj.geometry.boundingBox;
-  if (!bb) return false;
-  const size = measureScratchVec.copy(bb.max).sub(bb.min);
-  return Math.max(size.x, size.y, size.z) >= 0.12;
-}
-
-function getMeasurementHit(clientX, clientY) {
-  const rect = renderer.domElement.getBoundingClientRect();
-  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
-  measureMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  measureMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-  measureRaycaster.setFromCamera(measureMouse, camera);
-  const roots = [];
-  if (wallGroup) roots.push(wallGroup);
-  if (crashMatsGroup?.visible) roots.push(crashMatsGroup);
-  if (environmentGroup?.visible) roots.push(environmentGroup);
-  if (!roots.length) return null;
-  const hits = measureRaycaster.intersectObjects(roots, true);
-  return hits.find(hit => isMeasurementTargetMesh(hit.object)) || null;
-}
-
-function getHitTriangleVerticesWorld(hit) {
-  const obj = hit?.object;
-  const geo = obj?.geometry;
-  const pos = geo?.attributes?.position;
-  if (!obj || !geo || !pos) return null;
-  const index = geo.index;
-  const faceIndex = Number(hit.faceIndex);
-  if (!Number.isFinite(faceIndex) || faceIndex < 0) return null;
-  let i0 = 0;
-  let i1 = 1;
-  let i2 = 2;
-  if (index) {
-    i0 = index.getX(faceIndex * 3);
-    i1 = index.getX(faceIndex * 3 + 1);
-    i2 = index.getX(faceIndex * 3 + 2);
-  } else {
-    i0 = faceIndex * 3;
-    i1 = faceIndex * 3 + 1;
-    i2 = faceIndex * 3 + 2;
-  }
-  if (i2 >= pos.count) return null;
-  const a = new THREE.Vector3().fromBufferAttribute(pos, i0);
-  const b = new THREE.Vector3().fromBufferAttribute(pos, i1);
-  const c = new THREE.Vector3().fromBufferAttribute(pos, i2);
-  obj.localToWorld(a);
-  obj.localToWorld(b);
-  obj.localToWorld(c);
-  return [a, b, c];
-}
-
-function closestPointOnSegment(point, a, b, outVec) {
-  const ab = measureScratchA.copy(b).sub(a);
-  const lenSq = ab.lengthSq();
-  if (lenSq < 1e-10) return outVec.copy(a);
-  const t = THREE.MathUtils.clamp(measureScratchB.copy(point).sub(a).dot(ab) / lenSq, 0, 1);
-  return outVec.copy(a).addScaledVector(ab, t);
-}
-
-function resolveMeasurementSnap(hit) {
-  if (!hit?.point) return null;
-  const basePoint = hit.point.clone();
-  const camDist = camera.position.distanceTo(basePoint);
-  const snapDist = Math.max(0.025, camDist * 0.016);
-  const triVerts = getHitTriangleVerticesWorld(hit);
-  let snapped = null;
-  let snapType = null;
-  let bestDist = Infinity;
-
-  if (triVerts && measureTool.settings.snapToVertices) {
-    triVerts.forEach(v => {
-      const d = v.distanceTo(basePoint);
-      if (d <= snapDist && d < bestDist) {
-        bestDist = d;
-        snapped = v.clone();
-        snapType = 'vertex';
-      }
-    });
-  }
-
-  if (triVerts && measureTool.settings.snapToEdges) {
-    const edges = [
-      [triVerts[0], triVerts[1]],
-      [triVerts[1], triVerts[2]],
-      [triVerts[2], triVerts[0]],
-    ];
-    edges.forEach(([a, b]) => {
-      const p = closestPointOnSegment(basePoint, a, b, new THREE.Vector3());
-      const d = p.distanceTo(basePoint);
-      if (d <= snapDist * 1.15 && d < bestDist) {
-        bestDist = d;
-        snapped = p.clone();
-        snapType = 'edge';
-      }
-    });
-  }
-
-  if (!snapped && !measureTool.settings.snapToSurfaces) return null;
-  if (!snapped) {
-    snapped = basePoint.clone();
-    snapType = 'surface';
-  }
-
-  return {
-    point: snapped,
-    type: snapType,
-    object: hit.object,
-  };
-}
-
-function pickMeasurementPoint(clientX, clientY) {
-  const hit = getMeasurementHit(clientX, clientY);
-  if (!hit) return null;
-  return resolveMeasurementSnap(hit);
-}
-
-function commitMeasurementSegment(start, end, meta={}) {
-  if (!start || !end) return false;
-  if (start.distanceTo(end) < 0.01) return false;
-  measureTool.segments.push({
-    start: start.clone(),
-    end: end.clone(),
-    meta: {...meta},
-  });
-  if (measureTool.segments.length > 16) measureTool.segments.shift();
-  return true;
-}
-
-function updateMeasurePointerMove(clientX, clientY) {
-  if (!measureTool.settings.enabled || !measureTool.start) return false;
-  const snap = pickMeasurementPoint(clientX, clientY);
-  if (!snap) return true;
-  measureTool.preview = snap.point.clone();
-  measureTool.previewMeta = snap;
-  if (measureTool.start.distanceTo(measureTool.preview) > 0.005) {
-    measureTool.hasDragged = true;
-  }
-  renderMeasureOverlay();
-  return true;
-}
-
-function handleMeasureMouseDown(e) {
-  if (!measureTool.settings.enabled) return false;
-  if (e.button !== 0) return false;
-  const snap = pickMeasurementPoint(e.clientX, e.clientY);
-  if (!snap) return false;
-  if (!measureTool.start) {
-    measureTool.start = snap.point.clone();
-    measureTool.startMeta = snap;
-  } else {
-    measureTool.preview = snap.point.clone();
-    measureTool.previewMeta = snap;
-  }
-  measureTool.dragging = true;
-  measureTool.hasDragged = false;
-  renderMeasureOverlay();
-  e.preventDefault();
-  return true;
-}
-
-function handleMeasureMouseUp(e) {
-  if (!measureTool.settings.enabled || !measureTool.dragging) return false;
-  if (e.button !== 0) return false;
-  measureTool.dragging = false;
-  if (!measureTool.start || !measureTool.preview) return true;
-  const shouldCommit = measureTool.hasDragged || measureTool.start.distanceTo(measureTool.preview) > 0.05;
-  if (shouldCommit && commitMeasurementSegment(measureTool.start, measureTool.preview, {
-    startType: measureTool.startMeta?.type || 'surface',
-    endType: measureTool.previewMeta?.type || 'surface',
-  })) {
-    measureTool.start = null;
-    measureTool.preview = null;
-    measureTool.startMeta = null;
-    measureTool.previewMeta = null;
-    syncMeasurementToAppState('ui:measure:commit');
-  }
-  renderMeasureOverlay();
-  return true;
-}
-
-function cancelActiveMeasurement() {
-  if (!measureTool.start && !measureTool.dragging) return false;
-  measureTool.start = null;
-  measureTool.preview = null;
-  measureTool.startMeta = null;
-  measureTool.previewMeta = null;
-  measureTool.dragging = false;
-  measureTool.hasDragged = false;
-  renderMeasureOverlay();
-  syncMeasurementToAppState('ui:measure:cancel');
-  return true;
 }
 
 const XR_FLOOR_EYE_HEIGHT = 1.72;
@@ -2983,7 +2623,7 @@ if (reactivateCameraBtn) {
 
 wrap.addEventListener('mousedown', e => {
   hideHoverInfo();
-  if (handleMeasureMouseDown(e)) {
+  if (measurementTool && measurementTool.pointerDown(e)) {
     isDragging = false;
     dragMode = 'orbit';
     lastX = e.clientX;
@@ -2995,20 +2635,20 @@ wrap.addEventListener('mousedown', e => {
   lastX = e.clientX; lastY = e.clientY;
 });
 wrap.addEventListener('contextmenu', e => {
-  if (cancelActiveMeasurement()) {
+  if (measurementTool && measurementTool.cancelActive()) {
     e.preventDefault();
     return;
   }
   e.preventDefault();
 });
 window.addEventListener('mouseup', e => {
-  handleMeasureMouseUp(e);
+  if (measurementTool) measurementTool.pointerUp(e);
   isDragging = false;
   dragMode = 'orbit';
 });
 window.addEventListener('mousemove', e => {
-  if (measureTool.settings.enabled && measureTool.dragging) {
-    updateMeasurePointerMove(e.clientX, e.clientY);
+  if (measurementTool && measurementTool.isEnabled() && measurementTool.isDragging()) {
+    measurementTool.pointerMove(e.clientX, e.clientY);
     return;
   }
   if (!isDragging) return;
@@ -3022,7 +2662,7 @@ window.addEventListener('mousemove', e => {
   }
 });
 wrap.addEventListener('mousemove', e => {
-  if (updateMeasurePointerMove(e.clientX, e.clientY)) return;
+  if (measurementTool && measurementTool.pointerMove(e.clientX, e.clientY)) return;
   updateHover(e.clientX, e.clientY);
 });
 wrap.addEventListener('mouseleave', hideHoverInfo);
@@ -3105,7 +2745,7 @@ wrap.addEventListener('touchmove', e => {
 }, { passive: false });
 
 window.addEventListener('keydown', e => {
-  if (e.code === 'Escape' && cancelActiveMeasurement()) {
+  if (e.code === 'Escape' && measurementTool && measurementTool.cancelActive()) {
     e.preventDefault();
     return;
   }
@@ -3445,20 +3085,17 @@ const measureSnapPointToggle = document.getElementById('measureSnapPointToggle')
 const measureClearBtn = document.getElementById('measureClearBtn');
 
 function syncMeasureToggleUi() {
-  if (measureToolToggle) measureToolToggle.checked = !!measureTool.settings.enabled;
-  if (measureSnapSurfaceToggle) measureSnapSurfaceToggle.checked = !!measureTool.settings.snapToSurfaces;
-  if (measureSnapEdgeToggle) measureSnapEdgeToggle.checked = !!measureTool.settings.snapToEdges;
-  if (measureSnapPointToggle) measureSnapPointToggle.checked = !!measureTool.settings.snapToVertices;
+  const settings = measurementTool?.getSettings?.() || null;
+  if (measureToolToggle) measureToolToggle.checked = !!settings?.enabled;
+  if (measureSnapSurfaceToggle) measureSnapSurfaceToggle.checked = !!settings?.snapToSurfaces;
+  if (measureSnapEdgeToggle) measureSnapEdgeToggle.checked = !!settings?.snapToEdges;
+  if (measureSnapPointToggle) measureSnapPointToggle.checked = !!settings?.snapToVertices;
 }
 
 function updateMeasurementSetting(key, value) {
-  if (!Object.prototype.hasOwnProperty.call(measureTool.settings, key)) return;
-  measureTool.settings[key] = value;
-  saveMeasurementSettings(measureTool.settings);
-  if (!measureTool.settings.enabled) cancelActiveMeasurement();
+  if (!measurementTool || typeof measurementTool.setSetting !== 'function') return;
+  measurementTool.setSetting(key, value);
   syncMeasureToggleUi();
-  renderMeasureOverlay();
-  syncMeasurementToAppState(`ui:measure:${key}`);
 }
 
 if (measureToolToggle) {
@@ -3483,12 +3120,16 @@ if (measureSnapPointToggle) {
 }
 if (measureClearBtn) {
   measureClearBtn.addEventListener('click', () => {
-    clearMeasurements({segments: true, active: true});
+    if (measurementTool && typeof measurementTool.clearAll === 'function') {
+      measurementTool.clearAll({segments: true, active: true});
+    }
   });
 }
 syncMeasureToggleUi();
-renderMeasureOverlay();
-syncMeasurementToAppState('ui:measure:init');
+if (measurementTool && typeof measurementTool.render === 'function') measurementTool.render();
+if (measurementTool && typeof measurementTool.syncState === 'function') {
+  measurementTool.syncState('ui:measure:init');
+}
 
 // Resize
 function resize() {
