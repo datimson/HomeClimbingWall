@@ -102,24 +102,43 @@ function requestRebuild({immediate=false, stages=null} = {}) {
   }, wait);
 }
 
+const DESIGN_SWITCHER = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallDesignSwitcher
+) ? window.ClimbingWallDesignSwitcher : null;
 const RUNTIME_DESIGN_SYSTEM = (
+  DESIGN_SWITCHER &&
+  typeof DESIGN_SWITCHER.getRuntimeDesignSystem === 'function'
+) ? DESIGN_SWITCHER.getRuntimeDesignSystem() : (
   typeof window !== 'undefined' &&
   window.ClimbingWallDesignSystem
 ) ? window.ClimbingWallDesignSystem : null;
 
 function getAvailableDesignDefs() {
+  if (DESIGN_SWITCHER && typeof DESIGN_SWITCHER.getAvailableDesignDefs === 'function') {
+    return DESIGN_SWITCHER.getAvailableDesignDefs();
+  }
   if (!RUNTIME_DESIGN_SYSTEM || typeof RUNTIME_DESIGN_SYSTEM.listDesigns !== 'function') return [];
   const defs = RUNTIME_DESIGN_SYSTEM.listDesigns();
   return Array.isArray(defs) ? defs : [];
 }
 
 function getActiveDesignIdSafe() {
+  if (DESIGN_SWITCHER && typeof DESIGN_SWITCHER.getActiveDesignIdSafe === 'function') {
+    return DESIGN_SWITCHER.getActiveDesignIdSafe();
+  }
   if (!RUNTIME_DESIGN_SYSTEM || typeof RUNTIME_DESIGN_SYSTEM.getActiveDesignId !== 'function') return 'classic';
   const id = RUNTIME_DESIGN_SYSTEM.getActiveDesignId();
   return (typeof id === 'string' && id) ? id : 'classic';
 }
 
 function switchDesignAndReload(designId) {
+  if (DESIGN_SWITCHER && typeof DESIGN_SWITCHER.switchDesignAndReload === 'function') {
+    return DESIGN_SWITCHER.switchDesignAndReload(designId, {
+      syncAppStateFromCore: window?.syncAppStateFromCore,
+      reloadDelayMs: 30,
+    });
+  }
   if (!RUNTIME_DESIGN_SYSTEM || typeof RUNTIME_DESIGN_SYSTEM.setActiveDesignId !== 'function') return false;
   const next = String(designId || '').trim();
   if (!next) return false;
@@ -3301,45 +3320,14 @@ PANEL_GEOMETRY_SLIDER_SCHEMA.forEach(def => {
 syncSlidersFromState();
 syncGeometrySlidersFromState();
 
-function initDesignSelector() {
-  const select = document.getElementById('designSelect');
-  if (!select) return;
-  const defs = getAvailableDesignDefs();
-  const activeId = getActiveDesignIdSafe();
-  select.innerHTML = '';
-  defs.forEach(def => {
-    const id = String(def?.id || '').trim();
-    if (!id) return;
-    const opt = document.createElement('option');
-    opt.value = id;
-    const label = String(def?.label || id);
-    const status = String(def?.status || '').trim();
-    opt.textContent = status && status !== 'active' ? `${label} (${status})` : label;
-    if (id === activeId) opt.selected = true;
-    select.appendChild(opt);
-  });
-  if (!select.options.length) {
-    const fallback = document.createElement('option');
-    fallback.value = activeId;
-    fallback.textContent = activeId;
-    fallback.selected = true;
-    select.appendChild(fallback);
-  }
-  select.value = activeId;
-  select.addEventListener('change', () => {
-    const next = String(select.value || '').trim();
-    if (!next || next === activeId) return;
-    const ok = switchDesignAndReload(next);
-    if (!ok) {
-      select.value = activeId;
-      showSaveStatus('Design switch failed', true);
-      return;
-    }
-    showSaveStatus('Switching design...');
+if (DESIGN_SWITCHER && typeof DESIGN_SWITCHER.initDesignSelector === 'function') {
+  DESIGN_SWITCHER.initDesignSelector({
+    selectId: 'designSelect',
+    syncAppStateFromCore: window?.syncAppStateFromCore,
+    onStatus: (text, isError=false) => showSaveStatus(text, isError),
+    reloadDelayMs: 30,
   });
 }
-
-initDesignSelector();
 
 const wallControlsDetails = document.getElementById('wallControlsDetails');
 if (wallControlsDetails && window.matchMedia && window.matchMedia('(max-width: 980px)').matches) {
