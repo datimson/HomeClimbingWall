@@ -56,6 +56,15 @@ function persistCurrentCameraState() {
   return saveCameraState(getCurrentCameraState());
 }
 
+const CAMERA_CONTROLS_MODULE = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallCameraControls
+) ? window.ClimbingWallCameraControls : null;
+const cameraControlsUtils = (
+  CAMERA_CONTROLS_MODULE &&
+  typeof CAMERA_CONTROLS_MODULE.createCameraControlsUtils === 'function'
+) ? CAMERA_CONTROLS_MODULE.createCameraControlsUtils({THREE}) : null;
+
 const REBUILD_SCHEDULER_MODULE = (
   typeof window !== 'undefined' &&
   window.ClimbingWallRebuildScheduler
@@ -167,6 +176,15 @@ if (MEASUREMENT_TOOL_MODULE && typeof MEASUREMENT_TOOL_MODULE.createMeasurementT
     },
   });
 }
+
+const VR_MENU_MODULE = (
+  typeof window !== 'undefined' &&
+  window.ClimbingWallVrMenu
+) ? window.ClimbingWallVrMenu : null;
+const vrMenuToolkit = (
+  VR_MENU_MODULE &&
+  typeof VR_MENU_MODULE.createVrMenuToolkit === 'function'
+) ? VR_MENU_MODULE.createVrMenuToolkit({THREE}) : null;
 
 const XR_FLOOR_EYE_HEIGHT = 1.72;
 const XR_MIN_EYE_HEIGHT = 1.20;
@@ -317,31 +335,61 @@ const VR_GEOMETRY_KEY_MAP = Object.freeze({
   adjHeight: 'adjustableHeight',
 });
 
-const VR_MENU_BG_COLOR = 0xd7dce2;
-const VR_MENU_TEXT_COLOR = '#2f3338';
-const VR_MENU_TEXT_DARK_COLOR = '#21262b';
-const VR_MENU_TRACK_COLOR = 0x9aa5b0;
-const VR_MENU_FILL_COLOR = 0x5f7183;
-const VR_MENU_KNOB_COLOR = 0x2f3338;
-const VR_MENU_CLOSE_COLOR = 0xbac2ca;
-const VR_MENU_CLOSE_HOVER_COLOR = 0x90a4b9;
-const VR_MENU_TRACK_HOVER_COLOR = 0xb8a17c;
-const VR_MENU_FILL_HOVER_COLOR = 0x8f7450;
-const VR_MENU_KNOB_HOVER_COLOR = 0xf0cf98;
-const VR_MENU_NUDGE_COLOR = 0xb7c0c9;
-const VR_MENU_CURSOR_COLOR = 0x000000;
-const VR_MENU_CURSOR_RADIUS = 0.003;
-const VR_MENU_CURSOR_OFFSET = 0.008;
-const VR_MENU_GRAB_RADIUS_SPEED = 1.20;
-const VR_MENU_DISTANCE = 0.52;
-const VR_MENU_SIDE_OFFSET = 0.18;
-const VR_MENU_DOWN_OFFSET = -0.18;
-const VR_MENU_SCALE = 0.66;
-const VR_MENU_BASE_WIDTH = 0.90;
-const VR_MENU_ROW_HEIGHT = 0.095;
-const VR_MENU_PADDING_X = 0.08;
-const VR_MENU_PADDING_Y = 0.05;
-const VR_MENU_RENDER_ORDER_BUMP = 100000;
+const VR_MENU_CONSTANTS = (
+  vrMenuToolkit &&
+  vrMenuToolkit.constants
+) ? vrMenuToolkit.constants : Object.freeze({
+  BG_COLOR: 0xd7dce2,
+  TEXT_COLOR: '#2f3338',
+  TEXT_DARK_COLOR: '#21262b',
+  TRACK_COLOR: 0x9aa5b0,
+  FILL_COLOR: 0x5f7183,
+  KNOB_COLOR: 0x2f3338,
+  CLOSE_COLOR: 0xbac2ca,
+  CLOSE_HOVER_COLOR: 0x90a4b9,
+  TRACK_HOVER_COLOR: 0xb8a17c,
+  FILL_HOVER_COLOR: 0x8f7450,
+  KNOB_HOVER_COLOR: 0xf0cf98,
+  NUDGE_COLOR: 0xb7c0c9,
+  CURSOR_COLOR: 0x000000,
+  CURSOR_RADIUS: 0.003,
+  CURSOR_OFFSET: 0.008,
+  GRAB_RADIUS_SPEED: 1.20,
+  DISTANCE: 0.52,
+  SIDE_OFFSET: 0.18,
+  DOWN_OFFSET: -0.18,
+  SCALE: 0.66,
+  BASE_WIDTH: 0.90,
+  ROW_HEIGHT: 0.095,
+  PADDING_X: 0.08,
+  PADDING_Y: 0.05,
+  RENDER_ORDER_BUMP: 100000,
+});
+const VR_MENU_BG_COLOR = VR_MENU_CONSTANTS.BG_COLOR;
+const VR_MENU_TEXT_COLOR = VR_MENU_CONSTANTS.TEXT_COLOR;
+const VR_MENU_TEXT_DARK_COLOR = VR_MENU_CONSTANTS.TEXT_DARK_COLOR;
+const VR_MENU_TRACK_COLOR = VR_MENU_CONSTANTS.TRACK_COLOR;
+const VR_MENU_FILL_COLOR = VR_MENU_CONSTANTS.FILL_COLOR;
+const VR_MENU_KNOB_COLOR = VR_MENU_CONSTANTS.KNOB_COLOR;
+const VR_MENU_CLOSE_COLOR = VR_MENU_CONSTANTS.CLOSE_COLOR;
+const VR_MENU_CLOSE_HOVER_COLOR = VR_MENU_CONSTANTS.CLOSE_HOVER_COLOR;
+const VR_MENU_TRACK_HOVER_COLOR = VR_MENU_CONSTANTS.TRACK_HOVER_COLOR;
+const VR_MENU_FILL_HOVER_COLOR = VR_MENU_CONSTANTS.FILL_HOVER_COLOR;
+const VR_MENU_KNOB_HOVER_COLOR = VR_MENU_CONSTANTS.KNOB_HOVER_COLOR;
+const VR_MENU_NUDGE_COLOR = VR_MENU_CONSTANTS.NUDGE_COLOR;
+const VR_MENU_CURSOR_COLOR = VR_MENU_CONSTANTS.CURSOR_COLOR;
+const VR_MENU_CURSOR_RADIUS = VR_MENU_CONSTANTS.CURSOR_RADIUS;
+const VR_MENU_CURSOR_OFFSET = VR_MENU_CONSTANTS.CURSOR_OFFSET;
+const VR_MENU_GRAB_RADIUS_SPEED = VR_MENU_CONSTANTS.GRAB_RADIUS_SPEED;
+const VR_MENU_DISTANCE = VR_MENU_CONSTANTS.DISTANCE;
+const VR_MENU_SIDE_OFFSET = VR_MENU_CONSTANTS.SIDE_OFFSET;
+const VR_MENU_DOWN_OFFSET = VR_MENU_CONSTANTS.DOWN_OFFSET;
+const VR_MENU_SCALE = VR_MENU_CONSTANTS.SCALE;
+const VR_MENU_BASE_WIDTH = VR_MENU_CONSTANTS.BASE_WIDTH;
+const VR_MENU_ROW_HEIGHT = VR_MENU_CONSTANTS.ROW_HEIGHT;
+const VR_MENU_PADDING_X = VR_MENU_CONSTANTS.PADDING_X;
+const VR_MENU_PADDING_Y = VR_MENU_CONSTANTS.PADDING_Y;
+const VR_MENU_RENDER_ORDER_BUMP = VR_MENU_CONSTANTS.RENDER_ORDER_BUMP;
 const XR_MENU_WORLD_CLICK_SUPPRESS_MS = 260;
 
 const vrQuickMenu = {
@@ -378,206 +426,57 @@ vrMenuCursorOverlayGroup.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 950000;
 scene.add(vrMenuCursorOverlayGroup);
 
 function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
-  const canvas = document.createElement('canvas');
-  canvas.width = style.canvasWidth || 512;
-  canvas.height = style.canvasHeight || 128;
-  const ctx = canvas.getContext('2d');
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.needsUpdate = true;
-  const mat = new THREE.MeshBasicMaterial({
-    map: tex,
-    transparent: true,
-    side: THREE.DoubleSide,
-    depthTest: false,
-    depthWrite: false,
-  });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat);
-  mesh.renderOrder = 2140;
-  mesh.userData.textCanvas = canvas;
-  mesh.userData.textContext = ctx;
-  mesh.userData.textTexture = tex;
-  mesh.userData.textStyle = {
-    color: style.color || VR_MENU_TEXT_COLOR,
-    bg: style.bg || null,
-    fontPx: Number(style.fontPx) || 46,
-    fontWeight: style.fontWeight || '700',
-    align: style.align || 'center',
-    padding: Number(style.padding) || 26,
-  };
-  updateVrTextPlane(mesh, text);
-  return mesh;
+  if (!vrMenuToolkit || typeof vrMenuToolkit.makeTextPlane !== 'function') return null;
+  return vrMenuToolkit.makeTextPlane(text, width, height, style);
 }
 
 function updateVrTextPlane(mesh, text) {
-  if (!mesh?.userData?.textCanvas || !mesh?.userData?.textContext || !mesh?.userData?.textTexture) return;
-  const canvas = mesh.userData.textCanvas;
-  const ctx = mesh.userData.textContext;
-  const style = mesh.userData.textStyle || {};
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (style.bg) {
-    ctx.fillStyle = style.bg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  ctx.fillStyle = style.color || VR_MENU_TEXT_COLOR;
-  ctx.font = `${style.fontWeight || '700'} ${style.fontPx || 46}px Arial, sans-serif`;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = style.align || 'center';
-  const pad = Number(style.padding) || 26;
-  let x = canvas.width * 0.5;
-  if (ctx.textAlign === 'left') x = pad;
-  else if (ctx.textAlign === 'right') x = canvas.width - pad;
-  ctx.fillText(String(text), x, canvas.height * 0.5);
-  mesh.userData.textTexture.needsUpdate = true;
+  if (!vrMenuToolkit || typeof vrMenuToolkit.updateTextPlane !== 'function') return;
+  vrMenuToolkit.updateTextPlane(mesh, text);
 }
 
 function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
-  const m = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, height),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: false,
-      opacity: 1.0,
-      side: THREE.DoubleSide,
-      depthTest: false,
-      depthWrite: false,
-    })
-  );
-  m.renderOrder = 2100;
-  const txt = makeVrTextPlane(label, width * 0.82, height * 0.60, {
-    color: VR_MENU_TEXT_DARK_COLOR,
-    fontPx: 77,
-    fontWeight: '700',
-  });
-  txt.position.z = 0.004;
-  m.add(txt);
-  return m;
+  if (!vrMenuToolkit || typeof vrMenuToolkit.makeButton !== 'function') return null;
+  return vrMenuToolkit.makeButton(label, width, height, color);
 }
 
 function makeVrMenuCursor() {
-  const cursor = new THREE.Mesh(
-    new THREE.CircleGeometry(VR_MENU_CURSOR_RADIUS, 18),
-    new THREE.MeshBasicMaterial({
-      color: VR_MENU_CURSOR_COLOR,
-      transparent: true,
-      opacity: 1.0,
-      side: THREE.DoubleSide,
-      depthTest: false,
-      depthWrite: false,
-    })
-  );
-  const border = new THREE.Mesh(
-    new THREE.RingGeometry(VR_MENU_CURSOR_RADIUS * 1.18, VR_MENU_CURSOR_RADIUS * 1.72, 20),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 1.0,
-      side: THREE.DoubleSide,
-      depthTest: false,
-      depthWrite: false,
-    })
-  );
-  border.position.z = -0.0004;
-  border.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 899999;
-  border.frustumCulled = false;
-  cursor.add(border);
-  cursor.visible = false;
-  cursor.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 900000;
-  cursor.frustumCulled = false;
-  return cursor;
+  if (!vrMenuToolkit || typeof vrMenuToolkit.makeCursor !== 'function') return new THREE.Group();
+  return vrMenuToolkit.makeCursor();
 }
 
 function enforceVrMenuOverlay(root) {
-  if (!root) return;
-  root.traverse(obj => {
-    obj.frustumCulled = false;
-    const currentOrder = Number(obj.renderOrder);
-    const base = Number.isFinite(currentOrder) ? currentOrder : 0;
-    obj.renderOrder = base + VR_MENU_RENDER_ORDER_BUMP;
-    if (!obj.material) return;
-    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-    mats.forEach(mat => {
-      if (!mat) return;
-      mat.transparent = true;
-      if (!Number.isFinite(mat.opacity)) mat.opacity = 1.0;
-      mat.depthTest = false;
-      mat.depthWrite = false;
-      mat.fog = false;
-      mat.needsUpdate = true;
-    });
-  });
+  if (!vrMenuToolkit || typeof vrMenuToolkit.enforceOverlay !== 'function') return;
+  vrMenuToolkit.enforceOverlay(root);
 }
 
 function setVrMenuSliderHoverKey(key=null) {
-  const hoverKey = key || null;
-  Object.keys(vrQuickMenu.slidersByKey || {}).forEach(sliderKey => {
-    const slider = vrQuickMenu.slidersByKey[sliderKey];
-    if (!slider) return;
-    const isHover = hoverKey === sliderKey;
-    if (slider.track?.material?.color) {
-      slider.track.material.color.setHex(isHover ? VR_MENU_TRACK_HOVER_COLOR : VR_MENU_TRACK_COLOR);
-    }
-    if (slider.fill?.material?.color) {
-      slider.fill.material.color.setHex(isHover ? VR_MENU_FILL_HOVER_COLOR : VR_MENU_FILL_COLOR);
-    }
-    if (slider.knob?.material?.color) {
-      slider.knob.material.color.setHex(isHover ? VR_MENU_KNOB_HOVER_COLOR : VR_MENU_KNOB_COLOR);
-    }
-  });
-  vrQuickMenu.hoveredKey = hoverKey;
+  if (!vrMenuToolkit || typeof vrMenuToolkit.setSliderHoverKey !== 'function') return;
+  vrMenuToolkit.setSliderHoverKey(vrQuickMenu, key);
 }
 
 function setVrMenuCloseHover(active=false) {
-  const hovered = !!active;
-  if (vrQuickMenu.closeHovered === hovered) return;
-  vrQuickMenu.closeHovered = hovered;
-  const closeBtn = vrQuickMenu.closeBtn;
-  const mat = closeBtn?.material;
-  if (mat?.color) mat.color.setHex(hovered ? VR_MENU_CLOSE_HOVER_COLOR : VR_MENU_CLOSE_COLOR);
+  if (!vrMenuToolkit || typeof vrMenuToolkit.setCloseHover !== 'function') return;
+  vrMenuToolkit.setCloseHover(vrQuickMenu, active);
 }
 
 function orientVrMenuTowardWorldPoint(worldPoint) {
-  if (!vrQuickMenu.group || !worldPoint) return;
-  vrMenuFaceDir.copy(worldPoint).sub(vrQuickMenu.group.position);
-  if (vrMenuFaceDir.lengthSq() < 1e-10) return;
-  vrMenuFaceDir.normalize();
-  const yaw = Math.atan2(vrMenuFaceDir.x, vrMenuFaceDir.z);
-  const pitch = Math.asin(THREE.MathUtils.clamp(vrMenuFaceDir.y, -1, 1));
-  vrMenuFaceEuler.set(-pitch, yaw, 0, 'YXZ');
-  vrQuickMenu.group.quaternion.setFromEuler(vrMenuFaceEuler);
+  if (!vrMenuToolkit || typeof vrMenuToolkit.orientTowardWorldPoint !== 'function') return;
+  vrMenuToolkit.orientTowardWorldPoint(vrQuickMenu, worldPoint, vrMenuFaceDir, vrMenuFaceEuler);
 }
 
 function quantizeVrSliderValue(def, value) {
-  const min = Number(def?.min) || 0;
-  const max = Number(def?.max) || min;
-  let v = THREE.MathUtils.clamp(Number(value) || min, min, max);
-  const step = Math.abs(Number(def?.step) || 0);
-  if (step > 0) {
-    const n = Math.round((v - min) / step);
-    v = min + n * step;
-    const stepStr = String(step);
-    const fracLen = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
-    if (fracLen > 0) v = Number(v.toFixed(Math.min(6, fracLen + 1)));
-    v = THREE.MathUtils.clamp(v, min, max);
+  if (!vrMenuToolkit || typeof vrMenuToolkit.quantizeSliderValue !== 'function') {
+    const min = Number(def?.min) || 0;
+    const max = Number(def?.max) || min;
+    return THREE.MathUtils.clamp(Number(value) || min, min, max);
   }
-  return v;
+  return vrMenuToolkit.quantizeSliderValue(def, value);
 }
 
 function updateVrMenuSliderVisual(slider, value) {
-  if (!slider) return;
-  const def = slider.def;
-  const min = Number(def.min) || 0;
-  const max = Number(def.max) || min;
-  const span = Math.max(1e-6, max - min);
-  const v = THREE.MathUtils.clamp(Number(value) || min, min, max);
-  const t = THREE.MathUtils.clamp((v - min) / span, 0, 1);
-  const trackW = slider.trackWidth;
-  const left = slider.trackCenterX - trackW * 0.5;
-  slider.fill.scale.x = Math.max(0.0001, t);
-  slider.fill.position.x = left + (trackW * t * 0.5);
-  slider.knob.position.x = left + trackW * t;
-  if (slider.valueLabel) updateVrTextPlane(slider.valueLabel, def.fmt(v));
+  if (!vrMenuToolkit || typeof vrMenuToolkit.updateSliderVisual !== 'function') return;
+  vrMenuToolkit.updateSliderVisual(slider, value);
 }
 
 function getVrMenuCurrentValue(key, def) {
@@ -2353,6 +2252,16 @@ function startIntroAnimation(fromSavedState=true) {
 }
 
 function panCamera(dx, dy, verticalPan=false) {
+  if (cameraControlsUtils && typeof cameraControlsUtils.panCamera === 'function') {
+    const next = {radius, targetX, targetY, targetZ};
+    if (cameraControlsUtils.panCamera(next, camera, dx, dy, verticalPan)) {
+      targetX = next.targetX;
+      targetY = next.targetY;
+      targetZ = next.targetZ;
+      return;
+    }
+  }
+
   const panScale = Math.max(0.004, radius * 0.0017);
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
   const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
@@ -2373,6 +2282,9 @@ function panCamera(dx, dy, verticalPan=false) {
 }
 
 function shouldIgnoreDesktopMoveEvent(e) {
+  if (cameraControlsUtils && typeof cameraControlsUtils.shouldIgnoreDesktopMoveEvent === 'function') {
+    return cameraControlsUtils.shouldIgnoreDesktopMoveEvent(e, xrSessionActive);
+  }
   if (xrSessionActive) return true;
   if (e.metaKey || e.ctrlKey || e.altKey) return true;
   const target = e.target;
@@ -2383,6 +2295,13 @@ function shouldIgnoreDesktopMoveEvent(e) {
 }
 
 function setDesktopMoveKeyState(e, pressed) {
+  if (cameraControlsUtils && typeof cameraControlsUtils.setDesktopMoveKeyState === 'function') {
+    const handled = cameraControlsUtils.setDesktopMoveKeyState(desktopMoveKeys, e, pressed, xrSessionActive);
+    if (!handled) return false;
+    if (pressed && introAnim.active) stopIntroAnimation({restoreStart: false});
+    return true;
+  }
+
   if (shouldIgnoreDesktopMoveEvent(e)) return false;
   let key = null;
   switch (e.code) {
@@ -2417,6 +2336,10 @@ function setDesktopMoveKeyState(e, pressed) {
 }
 
 function clearDesktopMoveKeys() {
+  if (cameraControlsUtils && typeof cameraControlsUtils.clearDesktopMoveKeys === 'function') {
+    cameraControlsUtils.clearDesktopMoveKeys(desktopMoveKeys);
+    return;
+  }
   desktopMoveKeys.forward = false;
   desktopMoveKeys.back = false;
   desktopMoveKeys.left = false;
@@ -2426,6 +2349,22 @@ function clearDesktopMoveKeys() {
 
 function updateDesktopKeyboardMove(dt) {
   if (xrSessionActive || introAnim.active) return;
+  if (cameraControlsUtils && typeof cameraControlsUtils.updateDesktopKeyboardMove === 'function') {
+    const next = {targetX, targetZ};
+    const moved = cameraControlsUtils.updateDesktopKeyboardMove(
+      next,
+      camera,
+      desktopMoveKeys,
+      dt,
+      {moveSpeedMps: DESKTOP_MOVE_SPEED_MPS, moveRunMultiplier: DESKTOP_MOVE_RUN_MULT}
+    );
+    if (moved) {
+      targetX = next.targetX;
+      targetZ = next.targetZ;
+    }
+    return;
+  }
+
   const hasMove =
     desktopMoveKeys.forward ||
     desktopMoveKeys.back ||
@@ -3160,10 +3099,14 @@ function animate(now) {
   } else {
     updateIntroAnimation(ts);
     updateDesktopKeyboardMove(dt);
-    camera.position.x = targetX + radius * Math.sin(phi) * Math.sin(theta);
-    camera.position.y = targetY + radius * Math.cos(phi);
-    camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);
-    camera.lookAt(targetX, targetY, targetZ);
+    if (cameraControlsUtils && typeof cameraControlsUtils.applyOrbitCamera === 'function') {
+      cameraControlsUtils.applyOrbitCamera({theta, phi, radius, targetX, targetY, targetZ}, camera);
+    } else {
+      camera.position.x = targetX + radius * Math.sin(phi) * Math.sin(theta);
+      camera.position.y = targetY + radius * Math.cos(phi);
+      camera.position.z = targetZ + radius * Math.sin(phi) * Math.cos(theta);
+      camera.lookAt(targetX, targetY, targetZ);
+    }
   }
   updateInteractiveAnimations(dt);
 
