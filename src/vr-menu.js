@@ -243,7 +243,128 @@
     });
   }
 
+  function createVrMenuController(options={}) {
+    const getControllers = (typeof options.getControllers === 'function') ? options.getControllers : (() => []);
+    const isSessionActive = (typeof options.isSessionActive === 'function') ? options.isSessionActive : (() => false);
+    const setActiveControllerIndex = (typeof options.setActiveControllerIndex === 'function') ? options.setActiveControllerIndex : null;
+    const readControllerWorldRay = (typeof options.readControllerWorldRay === 'function') ? options.readControllerWorldRay : null;
+    const isMenuOpen = (typeof options.isMenuOpen === 'function') ? options.isMenuOpen : (() => false);
+    const getMenuInteractiveHit = (typeof options.getMenuInteractiveHit === 'function') ? options.getMenuInteractiveHit : (() => null);
+    const handleMenuSelect = (typeof options.handleMenuSelect === 'function') ? options.handleMenuSelect : null;
+    const suppressWorldSelectOnce = (typeof options.suppressWorldSelectOnce === 'function') ? options.suppressWorldSelectOnce : null;
+    const endMenuDrag = (typeof options.endMenuDrag === 'function') ? options.endMenuDrag : null;
+    const beginMenuMove = (typeof options.beginMenuMove === 'function') ? options.beginMenuMove : null;
+    const endMenuMove = (typeof options.endMenuMove === 'function') ? options.endMenuMove : null;
+    const isMenuMoveOwnedBy = (typeof options.isMenuMoveOwnedBy === 'function') ? options.isMenuMoveOwnedBy : (() => false);
+    const cancelMenuDragIfInactive = (typeof options.cancelMenuDragIfInactive === 'function')
+      ? options.cancelMenuDragIfInactive
+      : (() => false);
+    const cancelMenuMoveIfInactive = (typeof options.cancelMenuMoveIfInactive === 'function')
+      ? options.cancelMenuMoveIfInactive
+      : (() => false);
+    const consumeWorldSelectSuppression = (typeof options.consumeWorldSelectSuppression === 'function')
+      ? options.consumeWorldSelectSuppression
+      : (() => false);
+    const readMenuButtonPressed = (typeof options.readMenuButtonPressed === 'function') ? options.readMenuButtonPressed : null;
+    const clearMenu = (typeof options.clearMenu === 'function') ? options.clearMenu : null;
+    const buildMenu = (typeof options.buildMenu === 'function') ? options.buildMenu : null;
+
+    function findStateByController(controllerObj) {
+      return getControllers().find(s => s?.controller === controllerObj) || null;
+    }
+
+    function onControllerSelectStart(event) {
+      if (!isSessionActive()) return false;
+      const state = findStateByController(event?.target);
+      if (state && setActiveControllerIndex) setActiveControllerIndex(state.index);
+      const controller = state?.controller || event?.target;
+      if (!controller || !readControllerWorldRay || !readControllerWorldRay(controller)) return false;
+      if (!isMenuOpen()) return false;
+      const hit = getMenuInteractiveHit ? getMenuInteractiveHit() : null;
+      if (!handleMenuSelect || !handleMenuSelect(hit, state?.index ?? null, true)) return false;
+      if (suppressWorldSelectOnce) suppressWorldSelectOnce(state);
+      event?.stopPropagation?.();
+      return true;
+    }
+
+    function onControllerSelectCancel(event) {
+      const state = findStateByController(event?.target);
+      if (!state) return false;
+      state.suppressWorldSelectUntil = 0;
+      if (endMenuDrag) endMenuDrag(state.index);
+      return true;
+    }
+
+    function onControllerSqueezeStart(event) {
+      if (!isSessionActive() || !isMenuOpen()) return false;
+      const state = findStateByController(event?.target);
+      if (state && setActiveControllerIndex) setActiveControllerIndex(state.index);
+      const controller = state?.controller || event?.target;
+      if (!controller || !readControllerWorldRay || !readControllerWorldRay(controller)) return false;
+      const hit = getMenuInteractiveHit ? getMenuInteractiveHit() : null;
+      if (!hit || !beginMenuMove || !beginMenuMove(state?.index ?? -1, hit.point || null, hit.distance)) return false;
+      event?.stopPropagation?.();
+      return true;
+    }
+
+    function onControllerSqueezeEnd(event) {
+      const state = findStateByController(event?.target);
+      if (!state || !endMenuMove) return false;
+      endMenuMove(state.index);
+      return true;
+    }
+
+    function cancelDragIfInactive() {
+      return cancelMenuDragIfInactive ? !!cancelMenuDragIfInactive() : false;
+    }
+
+    function cancelMoveIfInactive() {
+      return cancelMenuMoveIfInactive ? !!cancelMenuMoveIfInactive() : false;
+    }
+
+    function updateMenuButtonToggle() {
+      if (!readMenuButtonPressed) return false;
+      let toggleRequested = false;
+      getControllers().forEach(state => {
+        const pressed = readMenuButtonPressed(state);
+        if (pressed && !state.menuPressedLast) toggleRequested = true;
+        state.menuPressedLast = pressed;
+      });
+      if (!toggleRequested) return false;
+      if (isMenuOpen()) {
+        if (clearMenu) clearMenu();
+        return true;
+      }
+      if (buildMenu) return !!buildMenu('S');
+      return false;
+    }
+
+    function shouldIgnoreWorldSelectForState(state) {
+      if (!state) return false;
+      if (isMenuMoveOwnedBy(state.index)) return true;
+      if (endMenuDrag && endMenuDrag(state.index)) {
+        state.suppressWorldSelectUntil = 0;
+        return true;
+      }
+      if (consumeWorldSelectSuppression && consumeWorldSelectSuppression(state)) return true;
+      return false;
+    }
+
+    return Object.freeze({
+      onControllerSelectStart,
+      onControllerSelectCancel,
+      onControllerSqueezeStart,
+      onControllerSqueezeEnd,
+      cancelDragIfInactive,
+      cancelMoveIfInactive,
+      readMenuButtonPressed,
+      updateMenuButtonToggle,
+      shouldIgnoreWorldSelectForState,
+    });
+  }
+
   global.ClimbingWallVrMenu = Object.freeze({
     createVrMenuToolkit,
+    createVrMenuController,
   });
 })(window);

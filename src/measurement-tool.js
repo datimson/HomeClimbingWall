@@ -347,6 +347,59 @@
       return true;
     }
 
+    function rayPreviewFromHit(hit) {
+      if (!state.settings.enabled || !state.start) return false;
+      const snap = resolveMeasurementSnap(hit);
+      if (!snap) return false;
+      state.preview = snap.point.clone();
+      state.previewMeta = snap;
+      render();
+      return true;
+    }
+
+    function rayClearPreview() {
+      if (!state.start && !state.preview) return false;
+      if (!state.start) return false;
+      state.preview = null;
+      state.previewMeta = null;
+      render();
+      return true;
+    }
+
+    function raySelectFromHit(hit) {
+      if (!state.settings.enabled) return false;
+      const snap = resolveMeasurementSnap(hit);
+      if (!snap) return false;
+
+      if (!state.start) {
+        state.start = snap.point.clone();
+        state.startMeta = snap;
+        state.preview = null;
+        state.previewMeta = null;
+        render();
+        syncToAppState('ui:measure:vr:start');
+        return true;
+      }
+
+      state.preview = snap.point.clone();
+      state.previewMeta = snap;
+      const committed = commitSegment(state.start, state.preview, {
+        startType: state.startMeta?.type || 'surface',
+        endType: state.previewMeta?.type || 'surface',
+      });
+      if (committed) {
+        state.start = null;
+        state.preview = null;
+        state.startMeta = null;
+        state.previewMeta = null;
+        render();
+        syncToAppState('ui:measure:vr:commit');
+        return true;
+      }
+      render();
+      return false;
+    }
+
     function pointerDown(eventLike) {
       if (!state.settings.enabled) return false;
       if (eventLike?.button !== 0) return false;
@@ -420,6 +473,9 @@
       pointerDown,
       pointerMove,
       pointerUp,
+      rayPreviewFromHit,
+      rayClearPreview,
+      raySelectFromHit,
       cancelActive,
       clearAll,
       setSetting,
