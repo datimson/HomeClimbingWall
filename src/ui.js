@@ -424,6 +424,74 @@ const vrMenuFaceEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const vrMenuCursorOverlayGroup = new THREE.Group();
 vrMenuCursorOverlayGroup.renderOrder = VR_MENU_RENDER_ORDER_BUMP + 950000;
 scene.add(vrMenuCursorOverlayGroup);
+const vrMenuManager = (
+  VR_MENU_MODULE &&
+  typeof VR_MENU_MODULE.createVrMenuManager === 'function'
+) ? VR_MENU_MODULE.createVrMenuManager({
+  THREE,
+  scene,
+  renderer,
+  camera,
+  toolkit: vrMenuToolkit,
+  constants: VR_MENU_CONSTANTS,
+  sliderDefs: VR_MENU_SLIDERS,
+  targetKeys: VR_MENU_TARGET_KEYS,
+  geometryKeyMap: VR_GEOMETRY_KEY_MAP,
+  quickMenuState: vrQuickMenu,
+  menuDragState: vrMenuDrag,
+  menuMoveState: vrMenuMove,
+  getWallState: () => wallState,
+  getWallGeometryState: () => wallGeometryState,
+  getAvailableDesignDefs: () => getAvailableDesignDefs(),
+  getActiveDesignIdSafe: () => getActiveDesignIdSafe(),
+  switchDesignAndReload: (designId) => switchDesignAndReload(designId),
+  setWallGeometryValue: (key, value, opts) => setWallGeometryValue(key, value, opts),
+  syncGeometrySlidersFromState: () => syncGeometrySlidersFromState(),
+  syncSlidersFromState: () => syncSlidersFromState(),
+  clampWallStateValue: (key, value) => clampWallStateValue(key, value),
+  setAdjAngle: (value) => setAdjAngle(value),
+  setEAngleValue: (value) => setEAngleValue(value),
+  setRigOpenValue: (value, rebuildNow=true) => setRigOpenValue(value, rebuildNow),
+  requestRebuild: (opts) => requestRebuild(opts),
+  rebuildStageGeometry: UI_REBUILD_STAGE.GEOMETRY,
+  stopESweep: () => { eSweepAnim.active = false; },
+  resetRigToggle: () => {
+    rigToggleAnim.targetDeg = null;
+    rigToggleAnim.lastRebuildDeg = NaN;
+  },
+  syncAppState: (reason) => {
+    if (typeof window?.syncAppStateFromCore === 'function') {
+      window.syncAppStateFromCore(reason);
+    }
+  },
+  getXrStandingEyeHeight: () => getXrStandingEyeHeight(),
+  setXrStandingEyeHeight: (value, opts) => setXrStandingEyeHeight(value, opts),
+  recalcXrStandingEyeHeightFromHead: () => recalcXrStandingEyeHeightFromHead(),
+  getMeasurementSettings: () => (
+    measurementTool && typeof measurementTool.getSettings === 'function'
+      ? measurementTool.getSettings()
+      : null
+  ),
+  setMeasurementSetting: (key, value) => {
+    if (!measurementTool || typeof measurementTool.setSetting !== 'function') return;
+    measurementTool.setSetting(key, value);
+  },
+  clearMeasurements: (opts) => {
+    if (!measurementTool || typeof measurementTool.clearAll !== 'function') return;
+    measurementTool.clearAll(opts);
+  },
+  syncMeasureUi: () => syncMeasureToggleUi(),
+  readControllerWorldRay: (controller) => readControllerWorldRay(controller),
+  getRayOrigin: () => xrRayOrigin,
+  getRayDirection: () => xrRayDir,
+  getControllers: () => xrControllers,
+  readPrimaryStick: (inputSource) => readPrimaryStick(inputSource),
+  applyStickDeadzone: (value) => applyStickDeadzone(value),
+  teleportMaxDistance: XR_TELEPORT_MAX_DISTANCE,
+  menuWorldClickSuppressMs: XR_MENU_WORLD_CLICK_SUPPRESS_MS,
+  menuButtonIndices: XR_MENU_BUTTON_INDICES,
+  upVector: xrUp,
+}) : null;
 const vrMenuInteractionController = (
   VR_MENU_MODULE &&
   typeof VR_MENU_MODULE.createVrMenuController === 'function'
@@ -439,8 +507,15 @@ const vrMenuInteractionController = (
   endMenuDrag: (controllerIndex) => endVrMenuDrag(controllerIndex),
   beginMenuMove: (controllerIndex, hitPoint, hitDistance) => beginVrMenuMove(controllerIndex, hitPoint, hitDistance),
   endMenuMove: (controllerIndex) => endVrMenuMove(controllerIndex),
-  isMenuMoveOwnedBy: (controllerIndex) => !!(vrMenuMove.active && vrMenuMove.controllerIndex === controllerIndex),
+  isMenuMoveOwnedBy: (controllerIndex) => (
+    vrMenuManager && typeof vrMenuManager.isMoveOwnedBy === 'function'
+      ? !!vrMenuManager.isMoveOwnedBy(controllerIndex)
+      : !!(vrMenuMove.active && vrMenuMove.controllerIndex === controllerIndex)
+  ),
   cancelMenuDragIfInactive: () => {
+    if (vrMenuManager && typeof vrMenuManager.cancelDragIfInactive === 'function') {
+      return !!vrMenuManager.cancelDragIfInactive();
+    }
     if (!vrMenuDrag.active) return false;
     const state = xrControllers.find(s => s.index === vrMenuDrag.controllerIndex);
     if (!state?.connected) {
@@ -450,6 +525,9 @@ const vrMenuInteractionController = (
     return false;
   },
   cancelMenuMoveIfInactive: () => {
+    if (vrMenuManager && typeof vrMenuManager.cancelMoveIfInactive === 'function') {
+      return !!vrMenuManager.cancelMoveIfInactive();
+    }
     if (!vrMenuMove.active) return false;
     if (!vrQuickMenu.open || !vrQuickMenu.group) {
       endVrMenuMove();
@@ -462,8 +540,15 @@ const vrMenuInteractionController = (
     }
     return false;
   },
-  consumeWorldSelectSuppression: (state) => consumeVrWorldSelectSuppression(state),
+  consumeWorldSelectSuppression: (state) => (
+    vrMenuManager && typeof vrMenuManager.consumeWorldSelectSuppression === 'function'
+      ? !!vrMenuManager.consumeWorldSelectSuppression(state)
+      : consumeVrWorldSelectSuppression(state)
+  ),
   readMenuButtonPressed: (state) => {
+    if (vrMenuManager && typeof vrMenuManager.readMenuButtonPressed === 'function') {
+      return !!vrMenuManager.readMenuButtonPressed(state);
+    }
     if (!state?.connected || state.handedness !== 'left') return false;
     const buttons = state.inputSource?.gamepad?.buttons;
     if (!buttons?.length) return false;
@@ -473,8 +558,16 @@ const vrMenuInteractionController = (
     }
     return false;
   },
-  clearMenu: () => clearVrQuickMenu(),
-  buildMenu: (target) => buildVrQuickMenu(target),
+  clearMenu: () => (
+    vrMenuManager && typeof vrMenuManager.clear === 'function'
+      ? vrMenuManager.clear()
+      : clearVrQuickMenu()
+  ),
+  buildMenu: (target) => (
+    vrMenuManager && typeof vrMenuManager.build === 'function'
+      ? !!vrMenuManager.build(target)
+      : buildVrQuickMenu(target)
+  ),
 }) : null;
 
 function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
@@ -532,6 +625,9 @@ function updateVrMenuSliderVisual(slider, value) {
 }
 
 function getVrMenuCurrentValue(key, def) {
+  if (vrMenuManager && typeof vrMenuManager.getCurrentValue === 'function') {
+    return vrMenuManager.getCurrentValue(key, def);
+  }
   const geometryKey = VR_GEOMETRY_KEY_MAP[key];
   if (geometryKey) {
     const raw = Number(wallGeometryState[geometryKey]);
@@ -543,6 +639,10 @@ function getVrMenuCurrentValue(key, def) {
 }
 
 function refreshVrQuickMenuValues() {
+  if (vrMenuManager && typeof vrMenuManager.refreshValues === 'function') {
+    vrMenuManager.refreshValues();
+    return;
+  }
   if (!vrQuickMenu.open) return;
   Object.keys(vrQuickMenu.slidersByKey || {}).forEach(key => {
     const slider = vrQuickMenu.slidersByKey[key];
@@ -552,6 +652,10 @@ function refreshVrQuickMenuValues() {
 }
 
 function clearVrQuickMenu() {
+  if (vrMenuManager && typeof vrMenuManager.clear === 'function') {
+    vrMenuManager.clear();
+    return;
+  }
   vrMenuDrag.active = false;
   vrMenuDrag.controllerIndex = -1;
   vrMenuDrag.key = null;
@@ -593,6 +697,9 @@ function clearVrQuickMenu() {
 }
 
 function resolveVrMenuTarget(info) {
+  if (vrMenuManager && typeof vrMenuManager.resolveTarget === 'function') {
+    return vrMenuManager.resolveTarget(info);
+  }
   if (!info) return null;
   if (info.hoverKind === 'trainingRig' || info.wall === 'R') return 'R';
   const id = String(info.wall || '').toUpperCase();
@@ -601,18 +708,28 @@ function resolveVrMenuTarget(info) {
 }
 
 function vrMenuTitleForTarget(target) {
+  if (vrMenuManager && typeof vrMenuManager.titleForTarget === 'function') {
+    return vrMenuManager.titleForTarget(target);
+  }
   if (target === 'S') return 'Wall Size';
   if (target === 'R') return 'Training Rig';
   return `Wall ${target}`;
 }
 
 function getVrMenuDesignDefs() {
+  if (vrMenuManager && typeof vrMenuManager.getDesignDefs === 'function') {
+    return vrMenuManager.getDesignDefs();
+  }
   const defs = getAvailableDesignDefs();
   if (defs.length) return defs;
   return [{id: getActiveDesignIdSafe(), label: getActiveDesignIdSafe(), status: 'active'}];
 }
 
 function applyVrMenuStateKey(key, nextValue) {
+  if (vrMenuManager && typeof vrMenuManager.applyStateKey === 'function') {
+    vrMenuManager.applyStateKey(key, nextValue);
+    return;
+  }
   const def = VR_MENU_SLIDERS[key];
   if (!def) return;
   const clamped = quantizeVrSliderValue(def, nextValue);
@@ -660,6 +777,10 @@ function applyVrMenuStateKey(key, nextValue) {
 }
 
 function placeVrQuickMenuDashboard() {
+  if (vrMenuManager && typeof vrMenuManager.placeDashboard === 'function') {
+    vrMenuManager.placeDashboard();
+    return;
+  }
   if (!vrQuickMenu.group) return;
   const xrCam = renderer.xr.getCamera(camera);
   if (!xrCam) return;
@@ -692,6 +813,9 @@ function placeVrQuickMenuDashboard() {
 }
 
 function buildVrQuickMenu(target) {
+  if (vrMenuManager && typeof vrMenuManager.build === 'function') {
+    return !!vrMenuManager.build(target);
+  }
   const keys = VR_MENU_TARGET_KEYS[target];
   if (!keys) return false;
   clearVrQuickMenu();
@@ -984,12 +1108,18 @@ function buildVrQuickMenu(target) {
 }
 
 function openVrQuickMenuForInfo(info) {
+  if (vrMenuManager && typeof vrMenuManager.openForInfo === 'function') {
+    return !!vrMenuManager.openForInfo(info);
+  }
   const target = resolveVrMenuTarget(info);
   if (!target) return false;
   return buildVrQuickMenu(target);
 }
 
 function getVrMenuInteractiveHit() {
+  if (vrMenuManager && typeof vrMenuManager.getInteractiveHit === 'function') {
+    return vrMenuManager.getInteractiveHit();
+  }
   if (!vrQuickMenu.open || !vrQuickMenu.interactive.length) return null;
   xrMenuRaycaster.far = XR_TELEPORT_MAX_DISTANCE;
   xrMenuRaycaster.set(xrRayOrigin, xrRayDir);
@@ -998,6 +1128,9 @@ function getVrMenuInteractiveHit() {
 }
 
 function setVrMenuSliderFromHit(slider, hitPoint) {
+  if (vrMenuManager && typeof vrMenuManager.setSliderFromHit === 'function') {
+    return !!vrMenuManager.setSliderFromHit(slider, hitPoint);
+  }
   if (!slider?.track || !hitPoint) return false;
   const local = slider.track.worldToLocal(hitPoint.clone());
   const t = THREE.MathUtils.clamp((local.x / slider.trackWidth) + 0.5, 0, 1);
@@ -1011,6 +1144,9 @@ function setVrMenuSliderFromHit(slider, hitPoint) {
 }
 
 function beginVrMenuDrag(controllerIndex, key, hitPoint=null) {
+  if (vrMenuManager && typeof vrMenuManager.beginDrag === 'function') {
+    return !!vrMenuManager.beginDrag(controllerIndex, key, hitPoint);
+  }
   const slider = vrQuickMenu.slidersByKey?.[key];
   if (!slider) return false;
   vrMenuDrag.active = true;
@@ -1021,6 +1157,9 @@ function beginVrMenuDrag(controllerIndex, key, hitPoint=null) {
 }
 
 function endVrMenuDrag(controllerIndex=null) {
+  if (vrMenuManager && typeof vrMenuManager.endDrag === 'function') {
+    return !!vrMenuManager.endDrag(controllerIndex);
+  }
   if (!vrMenuDrag.active) return false;
   if (Number.isInteger(controllerIndex) && vrMenuDrag.controllerIndex !== controllerIndex) return false;
   vrMenuDrag.active = false;
@@ -1030,6 +1169,9 @@ function endVrMenuDrag(controllerIndex=null) {
 }
 
 function beginVrMenuMove(controllerIndex, hitPoint=null, hitDistance=VR_MENU_DISTANCE) {
+  if (vrMenuManager && typeof vrMenuManager.beginMove === 'function') {
+    return !!vrMenuManager.beginMove(controllerIndex, hitPoint, hitDistance);
+  }
   if (!vrQuickMenu.open || !vrQuickMenu.group) return false;
   if (!Number.isInteger(controllerIndex) || controllerIndex < 0) return false;
   endVrMenuDrag(controllerIndex);
@@ -1049,6 +1191,9 @@ function beginVrMenuMove(controllerIndex, hitPoint=null, hitDistance=VR_MENU_DIS
 }
 
 function endVrMenuMove(controllerIndex=null) {
+  if (vrMenuManager && typeof vrMenuManager.endMove === 'function') {
+    return !!vrMenuManager.endMove(controllerIndex);
+  }
   if (!vrMenuMove.active) return false;
   if (Number.isInteger(controllerIndex) && vrMenuMove.controllerIndex !== controllerIndex) return false;
   vrMenuMove.active = false;
@@ -1061,6 +1206,10 @@ function endVrMenuMove(controllerIndex=null) {
 }
 
 function updateVrMenuDrag() {
+  if (vrMenuManager && typeof vrMenuManager.updateDrag === 'function') {
+    vrMenuManager.updateDrag();
+    return;
+  }
   if (!vrMenuDrag.active || !vrQuickMenu.open) return;
   const state = xrControllers.find(s => s.index === vrMenuDrag.controllerIndex);
   if (!state?.connected || !state.controller) {
@@ -1081,6 +1230,10 @@ function updateVrMenuDrag() {
 }
 
 function updateVrMenuMove(dtSeconds=(1/60)) {
+  if (vrMenuManager && typeof vrMenuManager.updateMove === 'function') {
+    vrMenuManager.updateMove(dtSeconds);
+    return;
+  }
   if (!vrMenuMove.active || !vrQuickMenu.open || !vrQuickMenu.group) return;
   const state = xrControllers.find(s => s.index === vrMenuMove.controllerIndex);
   if (!state?.connected || !state.controller) {
@@ -1131,6 +1284,9 @@ function updateVrMenuMove(dtSeconds=(1/60)) {
 }
 
 function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=false) {
+  if (vrMenuManager && typeof vrMenuManager.handleSelect === 'function') {
+    return !!vrMenuManager.handleSelect(hitOverride, controllerIndex, preferDrag);
+  }
   const hit = hitOverride || getVrMenuInteractiveHit();
   const action = hit?.object?.userData?.vrMenuAction;
   if (!action) return false;
@@ -1186,11 +1342,18 @@ function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=f
 }
 
 function suppressVrWorldSelectOnce(state) {
+  if (vrMenuManager && typeof vrMenuManager.suppressWorldSelectOnce === 'function') {
+    vrMenuManager.suppressWorldSelectOnce(state);
+    return;
+  }
   if (!state) return;
   state.suppressWorldSelectUntil = performance.now() + XR_MENU_WORLD_CLICK_SUPPRESS_MS;
 }
 
 function consumeVrWorldSelectSuppression(state) {
+  if (vrMenuManager && typeof vrMenuManager.consumeWorldSelectSuppression === 'function') {
+    return !!vrMenuManager.consumeWorldSelectSuppression(state);
+  }
   if (!state) return false;
   const until = Number(state.suppressWorldSelectUntil) || 0;
   if (until <= 0) return false;
@@ -1255,6 +1418,9 @@ function onVrControllerSqueezeEnd(event) {
 }
 
 function cancelVrMenuDragIfInactive() {
+  if (vrMenuManager && typeof vrMenuManager.cancelDragIfInactive === 'function') {
+    return !!vrMenuManager.cancelDragIfInactive();
+  }
   if (vrMenuInteractionController) {
     return !!vrMenuInteractionController.cancelDragIfInactive();
   }
@@ -1268,6 +1434,9 @@ function cancelVrMenuDragIfInactive() {
 }
 
 function cancelVrMenuMoveIfInactive() {
+  if (vrMenuManager && typeof vrMenuManager.cancelMoveIfInactive === 'function') {
+    return !!vrMenuManager.cancelMoveIfInactive();
+  }
   if (vrMenuInteractionController) {
     return !!vrMenuInteractionController.cancelMoveIfInactive();
   }
