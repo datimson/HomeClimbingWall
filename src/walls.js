@@ -63,7 +63,9 @@ function roofUnderY(z) {
 }
 
 // Extra rear depth behind kick boards to hide hold tails and allow structure space.
-const WALL_KICK_STRUCTURAL_DEPTH = 0.10;
+const WALL_KICK_STRUCTURAL_DEPTH = (typeof WALL_SHELL_DEPTH === 'number')
+  ? WALL_SHELL_DEPTH
+  : 0.10;
 const WALL_KICK_STRUCTURAL_GAP = 0.001;
 
 function getRearShellCladdingMat(spanU, spanV, fallbackMat) {

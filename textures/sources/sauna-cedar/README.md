@@ -1,7 +1,5 @@
 # Sauna Cedar Texture
 
-Source: Poly Haven - Raw Plank Wall
-URL: https://polyhaven.com/a/raw_plank_wall
-License: CC0
-
-Files are 1K maps for runtime performance in desktop/VR.
+Source: Sketchup Texture Club
+Page: https://www.sketchuptextureclub.com/textures/architecture/wood-floors/parquet-ligth/light-parquet-texture-seamless-05200
+Files: low-resolution preview maps (per user direction to try this texture)
