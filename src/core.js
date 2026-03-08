@@ -399,7 +399,7 @@ const LEGACY_BUILTIN_WALL_GEOMETRY_STATE = Object.freeze({
   width: 4.5,
   depth: 3.5,
   fixedHeight: 3.5,
-  adjustableHeight: 4.0,
+  adjustableHeight: 4.5,
 });
 const BUILTIN_WALL_GEOMETRY_STATE = Object.freeze(
   cloneNumericSeed(ACTIVE_DESIGN_DEF?.geometryDefaults, LEGACY_BUILTIN_WALL_GEOMETRY_STATE)
@@ -419,14 +419,14 @@ const WALL_STATE_LIMITS = cloneLimitMap(ACTIVE_DESIGN_DEF?.wallStateLimits, LEGA
 
 const LEGACY_BUILTIN_DEFAULT_WALL_STATE = Object.freeze({
   aAngle: 10, aWidth: 1.35,
-  bAngle: 10,  bWidth: 1.35,
+  bAngle: 10,  bWidth: 1.3,
   cAngle: 10, cWidth: 1.3,
   dAngle: 15,
-  d1Height: 2.2,
+  d1Height: 3,
   d2Angle: 15,
   eAngle: 5,
   f1Angle: 10, f1Height: 2.2, f1Width: 1.0,
-  f2Angle: 25, f2WidthTop: 1.35,
+  f2Angle: 10, f2WidthTop: 1.45,
   rigOpen: 0,
 });
 const BUILTIN_DEFAULT_WALL_STATE = Object.freeze(

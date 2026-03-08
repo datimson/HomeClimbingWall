@@ -1645,8 +1645,8 @@ function buildConceptVolumes(group, s) {
   const cornerShiftX = cornerDrop * Math.tan(aRad);
   const cornerShiftZ = cornerDrop * Math.tan(bRad);
   const cornerVol = makeCornerOverhangVolume(
-    0.64, 0.60, 0.84,
-    0.30, 0.26, 0.44,
+    0.56, 0.52, 0.66,
+    0.26, 0.24, 0.34,
     cornerDrop,
     cornerShiftX, cornerShiftZ,
     getConceptVolumeMaterial('cornerAB')
