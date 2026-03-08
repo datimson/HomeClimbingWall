@@ -25,17 +25,38 @@ const hoverInfoEl = document.getElementById('hoverInfo');
 const saveStatusEl = document.getElementById('saveStatus');
 const reactivateCameraBtn = document.getElementById('reactivateCameraBtn');
 const enterVrBtn = document.getElementById('enterVrBtn');
+const solarTimeSliderEl = document.getElementById('solarTimeSlider');
+const solarTimeLabelEl = document.getElementById('solarTimeLabel');
+const timeOfDayReadoutEl = document.getElementById('timeOfDayReadout');
 let activeHoverMesh = null;
 let dimsAreFaded = false;
 let sceneIsFaded = false;
 let focusedMaterialEntries = [];
 let activeFocusMesh = null;
 let measurementTool = null;
+const SOLAR_MINUTES_PER_FULL_TURN = 1440 / (Math.PI * 2);
 const personLookAtTarget = new THREE.Vector3();
 const xrRig = new THREE.Group();
 xrRig.name = 'xrRig';
 scene.add(xrRig);
 xrRig.add(camera);
+const vrSkyTimeDrag = {
+  active: false,
+  controllerIndex: -1,
+  lastAzimuth: 0,
+};
+const vrSkyCenter = new THREE.Vector3();
+const vrSkyVec = new THREE.Vector3();
+const vrTimeHud = {
+  group: null,
+  text: null,
+  lastText: '',
+};
+let solarReadoutLastLabel = '';
+const vrTimeHudPos = new THREE.Vector3();
+const vrTimeHudForward = new THREE.Vector3();
+const vrTimeHudRight = new THREE.Vector3();
+const vrTimeHudUp = new THREE.Vector3();
 
 const initialCameraState = (typeof loadCameraState === 'function') ? loadCameraState() : null;
 if (initialCameraState) {
@@ -481,6 +502,25 @@ const vrMenuManager = (
     measurementTool.clearAll(opts);
   },
   syncMeasureUi: () => syncMeasureToggleUi(),
+  getSceneToggleStates: () => ({
+    officeEnabled: !!officeEnabled,
+    saunaEnabled: !!saunaEnabled,
+  }),
+  setSceneToggle: (key, enabled) => {
+    if (key === 'officeEnabled') {
+      setOfficeEnabled(!!enabled);
+      const officeToggle = document.getElementById('officeToggle');
+      if (officeToggle) officeToggle.checked = !!officeEnabled;
+      return true;
+    }
+    if (key === 'saunaEnabled') {
+      setSaunaEnabled(!!enabled);
+      const saunaToggle = document.getElementById('saunaToggle');
+      if (saunaToggle) saunaToggle.checked = !!saunaEnabled;
+      return true;
+    }
+    return false;
+  },
   readControllerWorldRay: (controller) => readControllerWorldRay(controller),
   getRayOrigin: () => xrRayOrigin,
   getRayDirection: () => xrRayDir,
@@ -578,6 +618,95 @@ function makeVrTextPlane(text, width=0.46, height=0.11, style={}) {
 function updateVrTextPlane(mesh, text) {
   if (!vrMenuToolkit || typeof vrMenuToolkit.updateTextPlane !== 'function') return;
   vrMenuToolkit.updateTextPlane(mesh, text);
+}
+
+function formatSolarTimeLabel(minutes) {
+  const raw = Number(minutes);
+  const m = Number.isFinite(raw) ? raw : 0;
+  let wrapped = Math.round(m) % 1440;
+  if (wrapped < 0) wrapped += 1440;
+  const hh = Math.floor(wrapped / 60);
+  const mm = wrapped % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function ensureVrTimeHud() {
+  if (vrTimeHud.group) return vrTimeHud.group;
+  const group = new THREE.Group();
+  const text = makeVrTextPlane('Time 00:00', 0.28, 0.085, {
+    color: '#f8fbff',
+    fontPx: 58,
+    fontWeight: '700',
+    align: 'center',
+    padding: 18,
+    bg: 'rgba(12,16,22,0.72)',
+  });
+  if (!text) return null;
+  text.position.set(0, 0, 0.001);
+  group.add(text);
+  enforceVrMenuOverlay(group);
+  group.visible = false;
+  scene.add(group);
+  vrTimeHud.group = group;
+  vrTimeHud.text = text;
+  vrTimeHud.lastText = '';
+  return group;
+}
+
+function setSolarTimeReadouts(minutes, {pushSlider=false}={}) {
+  const label = formatSolarTimeLabel(minutes);
+  if (label !== solarReadoutLastLabel) {
+    if (solarTimeLabelEl) solarTimeLabelEl.textContent = label;
+    if (timeOfDayReadoutEl) timeOfDayReadoutEl.textContent = `Time ${label}`;
+    solarReadoutLastLabel = label;
+  }
+  if (solarTimeSliderEl && pushSlider) {
+    const value = String(Math.max(0, Math.min(1439, Math.round(Number(minutes) || 0))));
+    if (solarTimeSliderEl.value !== value) solarTimeSliderEl.value = value;
+  }
+  const vrText = `Time ${label}`;
+  if (xrSessionActive) {
+    const hud = ensureVrTimeHud();
+    if (hud) {
+      hud.visible = true;
+      if (vrTimeHud.text && vrTimeHud.lastText !== vrText) {
+        updateVrTextPlane(vrTimeHud.text, vrText);
+        vrTimeHud.lastText = vrText;
+      }
+    }
+  } else if (vrTimeHud.group) {
+    vrTimeHud.group.visible = false;
+  }
+}
+
+function syncSolarTimeReadouts({pushSlider=true}={}) {
+  if (typeof getSolarState !== 'function') return;
+  const state = getSolarState();
+  setSolarTimeReadouts(state?.minutes, {pushSlider});
+}
+
+function updateVrTimeHudPose() {
+  if (!xrSessionActive || !vrTimeHud.group) return;
+  const xrCam = renderer?.xr?.getCamera ? renderer.xr.getCamera(camera) : null;
+  if (!xrCam) return;
+  xrCam.updateMatrixWorld(true);
+  vrTimeHudPos.setFromMatrixPosition(xrCam.matrixWorld);
+  xrCam.getWorldDirection(vrTimeHudForward);
+  if (vrTimeHudForward.lengthSq() < 1e-10) vrTimeHudForward.set(0, 0, -1);
+  else vrTimeHudForward.normalize();
+  vrTimeHudRight.setFromMatrixColumn(xrCam.matrixWorld, 0);
+  if (vrTimeHudRight.lengthSq() < 1e-10) vrTimeHudRight.set(1, 0, 0);
+  else vrTimeHudRight.normalize();
+  vrTimeHudUp.setFromMatrixColumn(xrCam.matrixWorld, 1);
+  if (vrTimeHudUp.lengthSq() < 1e-10) vrTimeHudUp.set(0, 1, 0);
+  else vrTimeHudUp.normalize();
+
+  vrTimeHudPos
+    .addScaledVector(vrTimeHudForward, 0.75)
+    .addScaledVector(vrTimeHudRight, 0.28)
+    .addScaledVector(vrTimeHudUp, 0.17);
+  vrTimeHud.group.position.copy(vrTimeHudPos);
+  vrTimeHud.group.quaternion.copy(xrCam.quaternion);
 }
 
 function makeVrMenuButton(label, width=0.17, height=0.08, color=0xbec5cc) {
@@ -1362,42 +1491,50 @@ function consumeVrWorldSelectSuppression(state) {
 }
 
 function onVrControllerSelectStart(event) {
-  if (vrMenuInteractionController) {
-    vrMenuInteractionController.onControllerSelectStart(event);
-    return;
-  }
   if (!xrSessionActive) return;
   const state = xrControllers.find(s => s.controller === event?.target);
   if (state) xrActiveControllerIndex = state.index;
+  if (vrMenuInteractionController) {
+    const handled = vrMenuInteractionController.onControllerSelectStart(event);
+    if (handled) return;
+  }
   const controller = state?.controller || event?.target;
   if (!controller || !readControllerWorldRay(controller)) return;
-  if (!vrQuickMenu.open) return;
-  const hit = getVrMenuInteractiveHit();
-  if (handleVrMenuSelect(hit, state?.index ?? null, true)) {
-    suppressVrWorldSelectOnce(state);
-    event?.stopPropagation?.();
+  if (vrQuickMenu.open) {
+    const hit = getVrMenuInteractiveHit();
+    if (handleVrMenuSelect(hit, state?.index ?? null, true)) {
+      suppressVrWorldSelectOnce(state);
+      event?.stopPropagation?.();
+      return;
+    }
   }
 }
 
 function onVrControllerSelectCancel(event) {
+  const state = xrControllers.find(s => s.controller === event?.target);
+  if (state) endVrSkyTimeDrag(state.index, {save:false});
   if (vrMenuInteractionController) {
     vrMenuInteractionController.onControllerSelectCancel(event);
     return;
   }
-  const state = xrControllers.find(s => s.controller === event?.target);
   if (!state) return;
   state.suppressWorldSelectUntil = 0;
   endVrMenuDrag(state.index);
 }
 
 function onVrControllerSqueezeStart(event) {
+  if (!xrSessionActive) return;
+  const state = xrControllers.find(s => s.controller === event?.target);
+  if (state) xrActiveControllerIndex = state.index;
+  if (!vrQuickMenu.open && beginVrSkyTimeDrag(state?.index ?? -1)) {
+    event?.stopPropagation?.();
+    return;
+  }
   if (vrMenuInteractionController) {
     vrMenuInteractionController.onControllerSqueezeStart(event);
     return;
   }
-  if (!xrSessionActive || !vrQuickMenu.open) return;
-  const state = xrControllers.find(s => s.controller === event?.target);
-  if (state) xrActiveControllerIndex = state.index;
+  if (!vrQuickMenu.open) return;
   const controller = state?.controller || event?.target;
   if (!controller || !readControllerWorldRay(controller)) return;
   const hit = getVrMenuInteractiveHit();
@@ -1408,11 +1545,15 @@ function onVrControllerSqueezeStart(event) {
 }
 
 function onVrControllerSqueezeEnd(event) {
+  const state = xrControllers.find(s => s.controller === event?.target);
+  if (endVrSkyTimeDrag(state?.index ?? null, {save:true})) {
+    event?.stopPropagation?.();
+    return;
+  }
   if (vrMenuInteractionController) {
     vrMenuInteractionController.onControllerSqueezeEnd(event);
     return;
   }
-  const state = xrControllers.find(s => s.controller === event?.target);
   if (!state) return;
   endVrMenuMove(state.index);
 }
@@ -1737,6 +1878,7 @@ function updateVrControllerConnection(state, connected, data=null) {
   state.inputSource = data || null;
   state.interactiveHit = null;
   state.floorHit = null;
+  state.skyHit = null;
   state.stickPressedLast = false;
   state.menuPressedLast = false;
   state.anyPressedLast = false;
@@ -1787,6 +1929,7 @@ function ensureVrControllers() {
       inputSource: null,
       interactiveHit: null,
       floorHit: null,
+      skyHit: null,
       stickPressedLast: false,
       menuPressedLast: false,
       anyPressedLast: false,
@@ -1796,6 +1939,7 @@ function ensureVrControllers() {
       updateVrControllerConnection(state, true, ev?.data || null);
     });
     controller.addEventListener('disconnected', () => {
+      endVrSkyTimeDrag(state.index, {save:false});
       endVrMenuDrag(state.index);
       endVrMenuMove(state.index);
       updateVrControllerConnection(state, false, null);
@@ -2021,6 +2165,7 @@ function updateVrControllerPointers() {
       if (state?.rayLine) state.rayLine.visible = false;
       if (state?.controllerGrip) state.controllerGrip.visible = false;
       if (state?.menuCursor) state.menuCursor.visible = false;
+      if (state) state.skyHit = null;
     });
     if (measurementTool && typeof measurementTool.rayClearPreview === 'function') {
       measurementTool.rayClearPreview();
@@ -2054,12 +2199,14 @@ function updateVrControllerPointers() {
     }
     const menuHit = getVrMenuInteractiveHit();
     const interactiveHit = menuHit ? null : getVrInteractiveHit();
-    const maxFloorDist = (menuHit || interactiveHit)
-      ? Math.max(0.06, (menuHit || interactiveHit).distance - 0.02)
+    const skyHit = (menuHit || interactiveHit) ? null : getVrSkyHit(140);
+    const maxFloorDist = (menuHit || interactiveHit || skyHit)
+      ? Math.max(0.06, (menuHit || interactiveHit || skyHit).distance - 0.02)
       : XR_TELEPORT_MAX_DISTANCE;
-    const floorHit = menuHit ? null : getVrFloorHit(maxFloorDist);
+    const floorHit = (menuHit || interactiveHit || skyHit) ? null : getVrFloorHit(maxFloorDist);
     state.interactiveHit = interactiveHit;
     state.floorHit = floorHit;
+    state.skyHit = skyHit;
 
     if (state.menuCursor) {
       if (menuHit && vrQuickMenu.open && vrQuickMenu.group) {
@@ -2100,6 +2247,9 @@ function updateVrControllerPointers() {
     } else if (interactiveHit) {
       color = XR_RAY_COLOR_INTERACTIVE;
       lineDistance = interactiveHit.distance;
+    } else if (skyHit) {
+      color = XR_RAY_COLOR_INTERACTIVE;
+      lineDistance = skyHit.distance;
     } else if (floorHit) {
       color = XR_RAY_COLOR_TELEPORT;
       lineDistance = floorHit.distance;
@@ -2148,6 +2298,7 @@ function beginVrSession() {
   stopIntroAnimation({restoreStart: false});
   hideHoverInfo();
   clearVrQuickMenu();
+  endVrSkyTimeDrag(null, {save:false});
   if (!xrRestoreCameraState) xrRestoreCameraState = {...getCurrentCameraState()};
 
   let startX = W * 0.5;
@@ -2184,10 +2335,11 @@ function beginVrSession() {
   rigToggleAnim.targetDeg = null;
   rigToggleAnim.lastRebuildDeg = NaN;
   xrTeleportMarker.visible = false;
-  xrControllers.forEach(state => {
-    state.interactiveHit = null;
-    state.floorHit = null;
-    state.stickPressedLast = false;
+    xrControllers.forEach(state => {
+      state.interactiveHit = null;
+      state.floorHit = null;
+      state.skyHit = null;
+      state.stickPressedLast = false;
     state.menuPressedLast = false;
     state.anyPressedLast = false;
     state.visualReady = false;
@@ -2200,10 +2352,12 @@ function beginVrSession() {
 function endVrSession() {
   hideHoverInfo();
   clearVrQuickMenu();
+  endVrSkyTimeDrag(null, {save:false});
   xrTeleportMarker.visible = false;
   xrControllers.forEach(state => {
     state.interactiveHit = null;
     state.floorHit = null;
+    state.skyHit = null;
     state.stickPressedLast = false;
     state.menuPressedLast = false;
     state.anyPressedLast = false;
@@ -2884,6 +3038,89 @@ function showSaveStatus(text, isError=false) {
 }
 showSaveStatus.timer = null;
 
+function normalizeSignedRadians(value) {
+  const tau = Math.PI * 2;
+  let v = Number(value) || 0;
+  while (v > Math.PI) v -= tau;
+  while (v < -Math.PI) v += tau;
+  return v;
+}
+
+function getSkyDomeCenter(out=vrSkyCenter) {
+  if (typeof environmentSkyDome !== 'undefined' && environmentSkyDome) {
+    environmentSkyDome.getWorldPosition(out);
+    return out;
+  }
+  out.set(W * 0.5, 8.0, D * 0.5);
+  return out;
+}
+
+function getVrSkyHit(maxDistance=120) {
+  if (!xrSessionActive || !environmentEnabled) return null;
+  if (measurementTool && typeof measurementTool.isEnabled === 'function' && measurementTool.isEnabled()) return null;
+  if (typeof environmentSkyDome === 'undefined' || !environmentSkyDome || !environmentSkyDome.visible) return null;
+  if (xrRayDir.y < 0.04) return null;
+  xrRaycaster.far = Math.max(20, Number(maxDistance) || 120);
+  xrRaycaster.set(xrRayOrigin, xrRayDir);
+  const hits = xrRaycaster.intersectObject(environmentSkyDome, false);
+  return hits.length ? hits[0] : null;
+}
+
+function beginVrSkyTimeDrag(controllerIndex) {
+  if (!xrSessionActive || vrQuickMenu.open) return false;
+  if (!Number.isInteger(controllerIndex) || controllerIndex < 0) return false;
+  const state = xrControllers.find(s => s.index === controllerIndex);
+  if (!state?.connected || !state.controller || !readControllerWorldRay(state.controller)) return false;
+  const skyHit = getVrSkyHit(140);
+  if (!skyHit?.point) return false;
+  getSkyDomeCenter(vrSkyCenter);
+  vrSkyVec.copy(skyHit.point).sub(vrSkyCenter);
+  vrSkyVec.y = 0;
+  if (vrSkyVec.lengthSq() < 1e-10) return false;
+  vrSkyTimeDrag.active = true;
+  vrSkyTimeDrag.controllerIndex = controllerIndex;
+  vrSkyTimeDrag.lastAzimuth = Math.atan2(vrSkyVec.x, vrSkyVec.z);
+  hideHoverInfo();
+  return true;
+}
+
+function updateVrSkyTimeDrag() {
+  if (!vrSkyTimeDrag.active) return false;
+  const state = xrControllers.find(s => s.index === vrSkyTimeDrag.controllerIndex);
+  if (!state?.connected || !state.controller) {
+    vrSkyTimeDrag.active = false;
+    vrSkyTimeDrag.controllerIndex = -1;
+    return false;
+  }
+  if (!readControllerWorldRay(state.controller)) return true;
+  const skyHit = getVrSkyHit(140);
+  if (!skyHit?.point) return true;
+  getSkyDomeCenter(vrSkyCenter);
+  vrSkyVec.copy(skyHit.point).sub(vrSkyCenter);
+  vrSkyVec.y = 0;
+  if (vrSkyVec.lengthSq() < 1e-10) return true;
+  const azimuth = Math.atan2(vrSkyVec.x, vrSkyVec.z);
+  const delta = normalizeSignedRadians(azimuth - vrSkyTimeDrag.lastAzimuth);
+  vrSkyTimeDrag.lastAzimuth = azimuth;
+  if (Math.abs(delta) < 1e-4) return true;
+  if (typeof getSolarState !== 'function' || typeof setSolarTimeMinutes !== 'function') return true;
+  const current = getSolarState();
+  const nextMinutes = Number(current?.minutes || 0) + (delta * SOLAR_MINUTES_PER_FULL_TURN);
+  setSolarTimeMinutes(nextMinutes, {persist:false, emit:false});
+  return true;
+}
+
+function endVrSkyTimeDrag(controllerIndex=null, {save=true}={}) {
+  if (!vrSkyTimeDrag.active) return false;
+  if (Number.isInteger(controllerIndex) && controllerIndex >= 0 && vrSkyTimeDrag.controllerIndex !== controllerIndex) {
+    return false;
+  }
+  vrSkyTimeDrag.active = false;
+  vrSkyTimeDrag.controllerIndex = -1;
+  if (save && typeof saveSolarState === 'function') saveSolarState();
+  return true;
+}
+
 function handleIntroCancelInteraction(e) {
   if (!introAnim.active) return;
   if (reactivateCameraBtn && (e.target === reactivateCameraBtn || reactivateCameraBtn.contains(e.target))) return;
@@ -2898,6 +3135,7 @@ if (reactivateCameraBtn) {
   reactivateCameraBtn.addEventListener('click', e => {
     e.preventDefault();
     e.stopPropagation();
+    if (environmentEnabled) return;
     startIntroAnimation(true);
   });
 }
@@ -3036,6 +3274,7 @@ window.addEventListener('keyup', e => {
   setDesktopMoveKeyState(e, false);
 });
 window.addEventListener('blur', clearDesktopMoveKeys);
+window.addEventListener('blur', () => endVrSkyTimeDrag(null, {save:false}));
 
 // ── Slider wiring ──
 const UI_DESIGN_SYSTEM = RUNTIME_DESIGN_SYSTEM;
@@ -3308,6 +3547,43 @@ if (environmentToggle) {
   environmentToggle.checked = environmentEnabled;
   environmentToggle.addEventListener('change', () => {
     setEnvironmentEnabled(environmentToggle.checked);
+    if (environmentToggle.checked && introAnim.active) {
+      stopIntroAnimation({restoreStart: false});
+      setIntroButtonVisible(false);
+    }
+  });
+}
+
+if (solarTimeSliderEl) {
+  syncSolarTimeReadouts({pushSlider:true});
+  solarTimeSliderEl.addEventListener('input', () => {
+    const next = Number(solarTimeSliderEl.value);
+    if (!Number.isFinite(next)) return;
+    if (typeof setSolarTimeMinutes === 'function') {
+      setSolarTimeMinutes(next, {persist:false, emit:false});
+    }
+    setSolarTimeReadouts(next, {pushSlider:false});
+  });
+  solarTimeSliderEl.addEventListener('change', () => {
+    if (typeof saveSolarState === 'function') saveSolarState();
+  });
+} else {
+  syncSolarTimeReadouts({pushSlider:false});
+}
+
+const officeToggle = document.getElementById('officeToggle');
+if (officeToggle) {
+  officeToggle.checked = officeEnabled;
+  officeToggle.addEventListener('change', () => {
+    setOfficeEnabled(officeToggle.checked);
+  });
+}
+
+const saunaToggle = document.getElementById('saunaToggle');
+if (saunaToggle) {
+  saunaToggle.checked = saunaEnabled;
+  saunaToggle.addEventListener('change', () => {
+    setSaunaEnabled(saunaToggle.checked);
   });
 }
 
@@ -3435,6 +3711,7 @@ function animate(now) {
     updateVrLocomotion(dt);
     updateVrMenuMove(dt);
     updateVrMenuDrag();
+    updateVrSkyTimeDrag();
     cancelVrMenuMoveIfInactive();
     cancelVrMenuDragIfInactive();
     updateVrControllerPointers();
@@ -3451,6 +3728,8 @@ function animate(now) {
     }
   }
   updateInteractiveAnimations(dt);
+  syncSolarTimeReadouts({pushSlider:true});
+  if (xrSessionActive) updateVrTimeHudPose();
 
   const activeCamera = xrSessionActive ? renderer.xr.getCamera(camera) : camera;
   [scalePersonBillboard, scalePersonCompanionBillboard].forEach((billboard, idx) => {
@@ -3476,7 +3755,7 @@ async function initExperience() {
   } catch (_) {
     shouldPlayIntro = true;
   }
-  if (shouldPlayIntro) startIntroAnimation(true);
+  if (shouldPlayIntro && !environmentEnabled) startIntroAnimation(true);
   else setIntroButtonVisible(false);
 }
 

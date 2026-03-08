@@ -61,6 +61,23 @@
     opacity: 0.55;
   }
   .enter-vr-btn.is-hidden { display: none; }
+  .time-of-day-readout {
+    position: absolute;
+    top: 12px;
+    right: 112px;
+    z-index: 24;
+    min-width: 104px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: rgba(12, 16, 22, 0.62);
+    color: #f8fbff;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
   .hover-info {
     position: absolute;
     top: 14px;
@@ -143,6 +160,11 @@
   .angle-row label { font-size: 0.75rem; color: #777; width: 130px; flex-shrink: 0; }
   input[type=range] { flex: 1; accent-color: #c87941; }
   .angle-val { font-size: 0.82rem; color: #d4c9b8; width: 50px; text-align: right; }
+  .angle-val--time {
+    width: 66px;
+    color: #dce6f2;
+    font-variant-numeric: tabular-nums;
+  }
 
   .tag { display: inline-block; background: #2a2218; border: 1px solid #5a3e24; color: #c87941; font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; margin-bottom: 10px; }
 
@@ -331,6 +353,14 @@
       font-size: 0.62rem;
       padding: 6px 8px;
     }
+    .time-of-day-readout {
+      top: 8px;
+      right: 8px;
+      min-width: 86px;
+      padding: 5px 8px;
+      font-size: 0.66rem;
+      letter-spacing: 0.06em;
+    }
     .enter-vr-btn {
       right: 8px;
       bottom: 8px;
@@ -426,6 +456,14 @@
       bottom: 8px;
       font-size: 0.58rem;
       padding: 5px 7px;
+    }
+    .time-of-day-readout {
+      top: 8px;
+      right: 8px;
+      min-width: 82px;
+      padding: 4px 7px;
+      font-size: 0.60rem;
+      letter-spacing: 0.05em;
     }
     .panel h2 { margin-bottom: 10px; }
     .section, .section-collapsible { margin-bottom: 16px; }

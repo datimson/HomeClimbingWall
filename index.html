@@ -18,10 +18,11 @@
       <span>Design Brief — For Engineer Review</span>
     </header>
     <canvas id="c"></canvas>
-    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll or pinch to zoom &nbsp;·&nbsp; Right-drag or two-finger drag to pan &nbsp;·&nbsp; Arrow keys/WASD move &nbsp;·&nbsp; Shift = faster &nbsp;·&nbsp; Tap/click to stop intro &nbsp;·&nbsp; VR: trigger floor to teleport, trigger wall/rig for quick sliders, left menu button opens Wall Size, thumbstick moves, stick-click toggles fly mode</div>
+    <div class="controls-hint">Drag to orbit &nbsp;·&nbsp; Scroll or pinch to zoom &nbsp;·&nbsp; Right-drag or two-finger drag to pan &nbsp;·&nbsp; Arrow keys/WASD move &nbsp;·&nbsp; Shift = faster &nbsp;·&nbsp; Time of day slider in side panel &nbsp;·&nbsp; VR: hold grip on sky and drag to scrub time, trigger floor to teleport, trigger wall/rig for quick sliders, left menu button opens Wall Size, thumbstick moves, stick-click toggles fly mode</div>
     <div id="hoverInfo" class="hover-info"></div>
     <button id="reactivateCameraBtn" class="reactivate-camera-btn" type="button">Replay Intro</button>
     <button id="enterVrBtn" class="enter-vr-btn is-hidden" type="button">Enter VR</button>
+    <div id="timeOfDayReadout" class="time-of-day-readout">14:00</div>
   </div>
 
   <div class="panel">
@@ -93,6 +94,20 @@
         </div>
       </div>
       <div class="toggle-row">
+        <label class="toggle-label" for="officeToggle">Office Building</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="officeToggle">
+          <span class="toggle-meta">rear yard office</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="saunaToggle">Sauna</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="saunaToggle">
+          <span class="toggle-meta">timber + cedar interior</span>
+        </div>
+      </div>
+      <div class="toggle-row">
         <label class="toggle-label" for="polyRoofToggle">Poly Roof Extension</label>
         <div class="toggle-input-wrap">
           <input type="checkbox" id="polyRoofToggle">
@@ -135,6 +150,16 @@
         <button id="measureClearBtn" class="action-btn action-btn--ghost" type="button">Clear Measurements</button>
       </div>
       <div class="control-note">Desktop: left click to set start, move pointer to preview, click again to place end. Right click or Esc cancels active preview.</div>
+    </div>
+
+    <div class="section">
+      <h2>Sun &amp; Time</h2>
+      <div class="angle-row">
+        <label>Time of day</label>
+        <input type="range" id="solarTimeSlider" min="0" max="1439" value="840" step="1">
+        <span class="angle-val angle-val--time" id="solarTimeLabel">14:00</span>
+      </div>
+      <div class="control-note">Desktop: use this slider. VR: point at the sky and drag.</div>
     </div>
 
     <div class="section section-collapsible">

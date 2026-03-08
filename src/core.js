@@ -26,7 +26,8 @@ camera.position.set(8, 5.6, 9);
 camera.lookAt(2, 1.8, 1.5);
 
 // Lights
-scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+scene.add(ambientLight);
 const sun = new THREE.DirectionalLight(0xfff5e0, 1.2);
 sun.position.set(6, 10, 6);
 sun.castShadow = true;
@@ -39,10 +40,29 @@ sun.shadow.camera.left = -8;
 sun.shadow.camera.right = 8;
 sun.shadow.camera.top = 8;
 sun.shadow.camera.bottom = -4;
+const sunTarget = new THREE.Object3D();
+sunTarget.position.set(2, 1.6, 1.75);
+scene.add(sunTarget);
+sun.target = sunTarget;
 scene.add(sun);
 const fill = new THREE.DirectionalLight(0xc0d0ff, 0.3);
 fill.position.set(-5, 3, -3);
 scene.add(fill);
+const solarSunMarker = new THREE.Sprite(
+  new THREE.SpriteMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.0,
+    depthTest: false,
+    depthWrite: false,
+    fog: false,
+  })
+);
+solarSunMarker.scale.set(2.4, 2.4, 1.0);
+solarSunMarker.visible = false;
+solarSunMarker.renderOrder = 2500;
+solarSunMarker.frustumCulled = false;
+scene.add(solarSunMarker);
 
 // Grid floor
 const grid = new THREE.GridHelper(12, 24, GRID_ENV_MAJOR_HEX, GRID_ENV_MINOR_HEX);
@@ -60,9 +80,11 @@ grid.position.set(W * 0.5, 0, D * 0.5);
 const SITE_LAYOUT = Object.freeze({
   fenceOffsetFromOrigin: 0.70,      // fence lines are at x/z = -0.70
   fenceHeight: 1.80,                // boundary fence height
-  fenceLength: 20.00,               // fence run length from corner on each side
-  wallClearanceToFenceX: 0.80,      // target wall clearance to fence on x side
-  wallClearanceToFenceZ: 0.80,      // target wall clearance to fence on z side
+  // 21.19m keeps street-side boundary ~9.92m from outdoor slab (current house/slab layout).
+  fenceLength: 21.19,               // fence run length from corner on each side
+  wallClearanceToFenceX: 1.00,      // target wall clearance to fence on x side (to outer rear shell)
+  wallClearanceToFenceZ: 1.00,      // target wall clearance to fence on z side (to outer rear shell)
+  wallShellDepth: 0.10,             // rear/side shell build depth behind kick boards
 
   houseBackOffsetX: 6.00,           // house roof footprint offset from back boundary
   // Keeps nearest house wall 2.0m from side fence line (excluding roof/eave overhang).
@@ -101,6 +123,31 @@ const SITE_LAYOUT = Object.freeze({
   neighborWindowWidth: 1.20,        // window width
   neighborWindowFrontOffset: 3.00,  // from front end to nearest window edge
   neighborWindowBackOffset: 1.00,   // from back end to nearest window edge
+
+  // Office building (rear yard): 3m x 3m with skillion roof.
+  officeWidthX: 3.00,
+  officeDepthZ: 3.00,
+  officeRearSetbackX: 1.00,         // from rear/back boundary
+  officeStreetSetbackZ: 6.00,       // from street-side boundary
+  officeRoofHighY: 3.00,            // high side (nearest outdoor slab)
+  officeRoofLowY: 2.70,             // low side (nearest street boundary)
+  officePartitionFromStreetZ: 0.80, // internal wall offset from street-side wall
+});
+
+// Site orientation:
+// - Scene +X is the house front direction.
+// - House front is 30° west of true north (azimuth -30° where east=+90°).
+// For our solar EN->scene rotation, this corresponds to northYawDeg = 90 - azimuth.
+const SITE_HOUSE_FRONT_AZIMUTH_DEG = -30;
+const SITE_NORTH_YAW_DEG = 90 - SITE_HOUSE_FRONT_AZIMUTH_DEG;
+
+const SOLAR_SITE = Object.freeze({
+  label: '51 Station Rd, Deagon QLD',
+  latitudeDeg: -27.3253195,
+  longitudeDeg: 153.0679917,
+  utcOffsetMinutes: 10 * 60, // AEST (Queensland, no DST)
+  // 0 means world +Z is north and +X is east.
+  northYawDeg: SITE_NORTH_YAW_DEG,
 });
 
 const FENCE_OFFSET_FROM_ORIGIN = SITE_LAYOUT.fenceOffsetFromOrigin;
@@ -108,8 +155,9 @@ const FENCE_HEIGHT = SITE_LAYOUT.fenceHeight;
 const FENCE_LENGTH = SITE_LAYOUT.fenceLength;
 const WALL_CLEARANCE_TO_FENCE_X = SITE_LAYOUT.wallClearanceToFenceX;
 const WALL_CLEARANCE_TO_FENCE_Z = SITE_LAYOUT.wallClearanceToFenceZ;
-const WALL_ORIGIN_X = WALL_CLEARANCE_TO_FENCE_X - FENCE_OFFSET_FROM_ORIGIN;
-const WALL_ORIGIN_Z = WALL_CLEARANCE_TO_FENCE_Z - FENCE_OFFSET_FROM_ORIGIN;
+const WALL_SHELL_DEPTH = SITE_LAYOUT.wallShellDepth;
+const WALL_ORIGIN_X = WALL_CLEARANCE_TO_FENCE_X - FENCE_OFFSET_FROM_ORIGIN + WALL_SHELL_DEPTH;
+const WALL_ORIGIN_Z = WALL_CLEARANCE_TO_FENCE_Z - FENCE_OFFSET_FROM_ORIGIN + WALL_SHELL_DEPTH;
 
 const HOUSE_BACK_OFFSET_X = SITE_LAYOUT.houseBackOffsetX;
 const HOUSE_SIDE_OFFSET_Z = SITE_LAYOUT.houseSideOffsetZ;
@@ -141,6 +189,13 @@ const NEIGHBOR_WINDOW_BOTTOM_Y = SITE_LAYOUT.neighborWindowBottomY;
 const NEIGHBOR_WINDOW_WIDTH = SITE_LAYOUT.neighborWindowWidth;
 const NEIGHBOR_WINDOW_FRONT_OFFSET = SITE_LAYOUT.neighborWindowFrontOffset;
 const NEIGHBOR_WINDOW_BACK_OFFSET = SITE_LAYOUT.neighborWindowBackOffset;
+const OFFICE_WIDTH_X = SITE_LAYOUT.officeWidthX;
+const OFFICE_DEPTH_Z = SITE_LAYOUT.officeDepthZ;
+const OFFICE_REAR_SETBACK_X = SITE_LAYOUT.officeRearSetbackX;
+const OFFICE_STREET_SETBACK_Z = SITE_LAYOUT.officeStreetSetbackZ;
+const OFFICE_ROOF_HIGH_Y = SITE_LAYOUT.officeRoofHighY;
+const OFFICE_ROOF_LOW_Y = SITE_LAYOUT.officeRoofLowY;
+const OFFICE_PARTITION_FROM_STREET_Z = SITE_LAYOUT.officePartitionFromStreetZ;
 
 const thick = 0.08;
 const KICK = 0.7;    // vertical kick height at base of all walls
@@ -192,11 +247,14 @@ const LEGACY_STORAGE_KEYS = Object.freeze({
   trainingCabinet: 'climbingWall.trainingCabinet.v1',
   campusBoard: 'climbingWall.campusBoard.v1',
   conceptVolumes: 'climbingWall.conceptVolumes.v1',
+  office: 'climbingWall.office.v1',
+  sauna: 'climbingWall.sauna.v1',
   wallTextures: 'climbingWall.wallTextures.v1',
   climbingHolds: 'climbingWall.climbingHolds.v1',
   crashMatTexture: 'climbingWall.crashMatTexture.v1',
   textures: 'climbingWall.textures.v1',
   environment: 'climbingWall.environment.v1',
+  solarState: 'climbingWall.solarState.v1',
   geometryState: 'climbingWall.geometryState.v1',
   geometryDefaults: 'climbingWall.geometryDefaultState.v1',
 });
@@ -211,11 +269,14 @@ const TRAINING_RIG_STORAGE_KEY = STORAGE_KEYS.trainingRig;
 const TRAINING_CABINET_STORAGE_KEY = STORAGE_KEYS.trainingCabinet;
 const CAMPUS_BOARD_STORAGE_KEY = STORAGE_KEYS.campusBoard;
 const CONCEPT_VOLUMES_STORAGE_KEY = STORAGE_KEYS.conceptVolumes;
+const OFFICE_STORAGE_KEY = STORAGE_KEYS.office || LEGACY_STORAGE_KEYS.office;
+const SAUNA_STORAGE_KEY = STORAGE_KEYS.sauna || LEGACY_STORAGE_KEYS.sauna;
 const WALL_TEXTURES_STORAGE_KEY = STORAGE_KEYS.wallTextures;
 const CLIMBING_HOLDS_STORAGE_KEY = STORAGE_KEYS.climbingHolds;
 const CRASH_MAT_TEXTURE_STORAGE_KEY = STORAGE_KEYS.crashMatTexture;
 const TEXTURES_STORAGE_KEY = STORAGE_KEYS.textures;
 const ENVIRONMENT_STORAGE_KEY = STORAGE_KEYS.environment;
+const SOLAR_STATE_STORAGE_KEY = STORAGE_KEYS.solarState || LEGACY_STORAGE_KEYS.solarState;
 const WALL_GEOMETRY_STATE_STORAGE_KEY = STORAGE_KEYS.geometryState;
 const WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY = STORAGE_KEYS.geometryDefaults;
 
@@ -477,6 +538,7 @@ function applyWallGeometryState(nextState, {rebuildScene=true, persistState=true
 
   if (typeof rebuildFloorSlab === 'function') rebuildFloorSlab();
   if (typeof updateEnvironmentAnchors === 'function') updateEnvironmentAnchors();
+  applySolarLightingState({persist:false, emit:false});
   if (rebuildScene) requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('geometry:update');
   return wallGeometryState;
@@ -538,6 +600,253 @@ function saveCameraState(cameraState) {
   const ok = persistWallState(CAMERA_STATE_STORAGE_KEY, normalized);
   if (ok) syncAppStateFromCore('camera:save');
   return ok;
+}
+
+function formatIsoDate(y, m, d) {
+  const mm = String(m).padStart(2, '0');
+  const dd = String(d).padStart(2, '0');
+  return `${y}-${mm}-${dd}`;
+}
+
+function getSiteTodayIsoDate(now=new Date()) {
+  const siteMs = now.getTime() + (SOLAR_SITE.utcOffsetMinutes * 60000);
+  const siteNow = new Date(siteMs);
+  return formatIsoDate(siteNow.getUTCFullYear(), siteNow.getUTCMonth() + 1, siteNow.getUTCDate());
+}
+
+const BUILTIN_SOLAR_STATE = Object.freeze({
+  date: getSiteTodayIsoDate(),
+  minutes: 14 * 60,
+});
+
+function clampSolarMinutes(value) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return BUILTIN_SOLAR_STATE.minutes;
+  let wrapped = Math.round(v) % 1440;
+  if (wrapped < 0) wrapped += 1440;
+  return wrapped;
+}
+
+function normalizeSolarDate(raw, fallbackDate=getSiteTodayIsoDate()) {
+  if (typeof raw !== 'string') return fallbackDate;
+  const match = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return fallbackDate;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return fallbackDate;
+  if (m < 1 || m > 12 || d < 1 || d > 31) return fallbackDate;
+  return formatIsoDate(y, m, d);
+}
+
+function normalizeSolarState(source, fallback=BUILTIN_SOLAR_STATE) {
+  const seed = (fallback && typeof fallback === 'object') ? fallback : BUILTIN_SOLAR_STATE;
+  return {
+    date: normalizeSolarDate(source?.date, seed.date || getSiteTodayIsoDate()),
+    minutes: clampSolarMinutes(source?.minutes),
+  };
+}
+
+function loadSolarState() {
+  const fallback = {
+    ...BUILTIN_SOLAR_STATE,
+    date: getSiteTodayIsoDate(),
+  };
+  const saved = readStoredWallState(SOLAR_STATE_STORAGE_KEY);
+  return normalizeSolarState(saved, fallback);
+}
+
+let solarState = loadSolarState();
+
+const SOLAR_RAD = Math.PI / 180;
+const SOLAR_DAY_MS = 86400000;
+const SOLAR_J1970 = 2440588;
+const SOLAR_J2000 = 2451545;
+const SOLAR_EARTH_TILT = SOLAR_RAD * 23.4397;
+const solarVecFocus = new THREE.Vector3();
+const solarVecDir = new THREE.Vector3();
+const solarSkyTopColor = new THREE.Color();
+const solarSkyBottomColor = new THREE.Color();
+const solarColorDayTop = new THREE.Color(0x4f9be6);
+const solarColorDayBottom = new THREE.Color(0xffffff);
+const solarColorDuskTop = new THREE.Color(0xff9a5e);
+const solarColorDuskBottom = new THREE.Color(0xffd8be);
+const solarColorNightTop = new THREE.Color(0x070b18);
+const solarColorNightBottom = new THREE.Color(0x141b2d);
+const solarSunColorDay = new THREE.Color(0xfff2da);
+const solarSunColorDusk = new THREE.Color(0xffbb84);
+const solarSunColorNight = new THREE.Color(0x6a7da6);
+const solarFillColorDay = new THREE.Color(0xc0d0ff);
+const solarFillColorDusk = new THREE.Color(0xffb88d);
+const solarFillColorNight = new THREE.Color(0x2c3b5a);
+const defaultSunPos = sun.position.clone();
+const defaultFillPos = fill.position.clone();
+
+function toSolarJulian(dateUtc) {
+  return (dateUtc.valueOf() / SOLAR_DAY_MS) - 0.5 + SOLAR_J1970;
+}
+
+function toSolarDays(dateUtc) {
+  return toSolarJulian(dateUtc) - SOLAR_J2000;
+}
+
+function getSolarSunCoords(daysFromJ2000) {
+  const M = SOLAR_RAD * (357.5291 + (0.98560028 * daysFromJ2000));
+  const C = SOLAR_RAD * ((1.9148 * Math.sin(M)) + (0.02 * Math.sin(2 * M)) + (0.0003 * Math.sin(3 * M)));
+  const P = SOLAR_RAD * 102.9372;
+  const L = M + C + P + Math.PI;
+  return {
+    dec: Math.asin(Math.sin(L) * Math.sin(SOLAR_EARTH_TILT)),
+    ra: Math.atan2(Math.sin(L) * Math.cos(SOLAR_EARTH_TILT), Math.cos(L)),
+  };
+}
+
+function getSolarDateUtcFromState(state=solarState) {
+  const normalized = normalizeSolarState(state, {
+    ...BUILTIN_SOLAR_STATE,
+    date: getSiteTodayIsoDate(),
+  });
+  const [yRaw, mRaw, dRaw] = normalized.date.split('-');
+  const y = Number(yRaw);
+  const m = Number(mRaw);
+  const d = Number(dRaw);
+  const hh = Math.floor(normalized.minutes / 60);
+  const mm = normalized.minutes % 60;
+  const utcMs = Date.UTC(y, m - 1, d, hh, mm, 0, 0) - (SOLAR_SITE.utcOffsetMinutes * 60000);
+  return new Date(utcMs);
+}
+
+function getSolarPosition(dateUtc, latDeg, lonDeg) {
+  const lw = -lonDeg * SOLAR_RAD;
+  const phi = latDeg * SOLAR_RAD;
+  const d = toSolarDays(dateUtc);
+  const c = getSolarSunCoords(d);
+  const H = (SOLAR_RAD * (280.16 + (360.9856235 * d))) - lw - c.ra;
+  const altitude = Math.asin(
+    (Math.sin(phi) * Math.sin(c.dec)) +
+    (Math.cos(phi) * Math.cos(c.dec) * Math.cos(H))
+  );
+  const azimuthSouth = Math.atan2(
+    Math.sin(H),
+    (Math.cos(H) * Math.sin(phi)) - (Math.tan(c.dec) * Math.cos(phi))
+  );
+  return { altitude, azimuthSouth };
+}
+
+function getSolarFocusPoint() {
+  solarVecFocus.set(
+    WALL_ORIGIN_X + (W * 0.5),
+    Math.max(1.5, H_fixed * 0.45),
+    WALL_ORIGIN_Z + (D * 0.5)
+  );
+  return solarVecFocus;
+}
+
+function saveSolarState(nextSolarState, {emit=true}={}) {
+  const normalized = normalizeSolarState(nextSolarState, {
+    ...BUILTIN_SOLAR_STATE,
+    date: getSiteTodayIsoDate(),
+  });
+  const ok = persistWallState(SOLAR_STATE_STORAGE_KEY, normalized);
+  if (ok) solarState = normalized;
+  if (ok && emit) syncAppStateFromCore('solar:save');
+  return ok;
+}
+
+function applySolarLightingState({persist=false, emit=false}={}) {
+  if (!environmentEnabled) {
+    ambientLight.intensity = 0.4;
+    sun.intensity = 1.2;
+    sun.color.copy(solarSunColorDay);
+    sun.position.copy(defaultSunPos);
+    fill.intensity = 0.3;
+    fill.color.copy(solarFillColorDay);
+    fill.position.copy(defaultFillPos);
+    const focus = getSolarFocusPoint();
+    sunTarget.position.copy(focus);
+    sun.castShadow = true;
+    solarSunMarker.visible = false;
+    return;
+  }
+
+  const whenUtc = getSolarDateUtcFromState(solarState);
+  const pos = getSolarPosition(whenUtc, SOLAR_SITE.latitudeDeg, SOLAR_SITE.longitudeDeg);
+  const altDeg = THREE.MathUtils.radToDeg(pos.altitude);
+  const azNorth = pos.azimuthSouth + Math.PI;
+  const cosAlt = Math.max(0.00001, Math.cos(pos.altitude));
+  const east = Math.sin(azNorth) * cosAlt;
+  const north = Math.cos(azNorth) * cosAlt;
+  const up = Math.sin(pos.altitude);
+  const yaw = THREE.MathUtils.degToRad(SOLAR_SITE.northYawDeg);
+  const dirX = (east * Math.cos(yaw)) + (north * Math.sin(yaw));
+  const dirZ = (north * Math.cos(yaw)) - (east * Math.sin(yaw));
+  solarVecDir.set(dirX, up, dirZ).normalize();
+
+  const daylight = THREE.MathUtils.clamp((altDeg + 6) / 18, 0, 1);
+  const twilight = THREE.MathUtils.clamp(1 - Math.abs((altDeg - 2) / 14), 0, 1) * (1 - (daylight * 0.65));
+  const night = 1 - THREE.MathUtils.clamp((altDeg + 10) / 20, 0, 1);
+
+  const focus = getSolarFocusPoint();
+  sunTarget.position.copy(focus);
+  sun.position.copy(focus).addScaledVector(solarVecDir, 38);
+  sun.intensity = 1.35 * daylight;
+  sun.castShadow = daylight > 0.08;
+  sun.color.copy(solarSunColorNight).lerp(solarSunColorDusk, twilight).lerp(solarSunColorDay, daylight);
+
+  fill.intensity = 0.01 + (0.22 * daylight) + (0.04 * twilight);
+  fill.color.copy(solarFillColorNight).lerp(solarFillColorDusk, twilight).lerp(solarFillColorDay, daylight);
+  fill.position.copy(focus).addScaledVector(solarVecDir, -22).add(new THREE.Vector3(0, 4.5, 0));
+
+  ambientLight.intensity = 0.03 + (0.32 * daylight) + (0.03 * (1 - night));
+
+  const sunMarkerOpacity = THREE.MathUtils.clamp((altDeg + 6) / 18, 0, 1);
+  solarSunMarker.position.copy(focus).addScaledVector(solarVecDir, 56);
+  solarSunMarker.visible = sunMarkerOpacity > 0.01;
+  if (solarSunMarker.material) {
+    solarSunMarker.material.opacity = 0.3 + (0.7 * sunMarkerOpacity);
+    solarSunMarker.material.needsUpdate = true;
+  }
+
+  solarSkyTopColor.copy(solarColorNightTop).lerp(solarColorDayTop, daylight).lerp(solarColorDuskTop, twilight * 0.85);
+  solarSkyBottomColor.copy(solarColorNightBottom).lerp(solarColorDayBottom, daylight).lerp(solarColorDuskBottom, twilight * 0.75);
+
+  renderer.setClearColor(solarSkyBottomColor);
+  if (scene.background && scene.background.isColor) scene.background.copy(solarSkyBottomColor);
+  else scene.background = solarSkyBottomColor.clone();
+  if (scene.fog?.color) scene.fog.color.copy(solarSkyBottomColor);
+
+  const skyUniforms = (
+    typeof environmentSkyDome !== 'undefined' &&
+    environmentSkyDome?.material?.uniforms
+  ) ? environmentSkyDome.material.uniforms : null;
+  if (skyUniforms?.topColor?.value && skyUniforms?.bottomColor?.value) {
+    skyUniforms.topColor.value.copy(solarSkyTopColor);
+    skyUniforms.bottomColor.value.copy(solarSkyBottomColor);
+    if (skyUniforms.exponent?.value !== undefined) {
+      skyUniforms.exponent.value = THREE.MathUtils.lerp(1.28, 0.92, daylight);
+    }
+  }
+
+  if (persist) saveSolarState(solarState, {emit});
+}
+
+function setSolarState(nextSolarState, {persist=false, emit=true}={}) {
+  solarState = normalizeSolarState(nextSolarState, {
+    ...BUILTIN_SOLAR_STATE,
+    date: getSiteTodayIsoDate(),
+  });
+  applySolarLightingState({persist, emit:false});
+  if (persist) saveSolarState(solarState, {emit});
+  else if (emit) syncAppStateFromCore('solar:update');
+  return {...solarState};
+}
+
+function setSolarTimeMinutes(minutes, options={}) {
+  return setSolarState({...solarState, minutes}, options);
+}
+
+function getSolarState() {
+  return {...solarState};
 }
 
 function loadDefaultWallState() {
@@ -608,6 +917,8 @@ let trainingRigEnabled = readStoredBool(TRAINING_RIG_STORAGE_KEY, true);
 let trainingCabinetEnabled = readStoredBool(TRAINING_CABINET_STORAGE_KEY, true);
 let campusBoardEnabled = readStoredBool(CAMPUS_BOARD_STORAGE_KEY, true);
 let conceptVolumesEnabled = readStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, true);
+let officeEnabled = readStoredBool(OFFICE_STORAGE_KEY, true);
+let saunaEnabled = readStoredBool(SAUNA_STORAGE_KEY, true);
 let texturedWallsEnabled = readStoredBool(WALL_TEXTURES_STORAGE_KEY, true);
 let climbingHoldsEnabled = readStoredBool(CLIMBING_HOLDS_STORAGE_KEY, true);
 let crashMatTextureEnabled = readStoredBool(CRASH_MAT_TEXTURE_STORAGE_KEY, true);
@@ -651,6 +962,7 @@ function applyEnvironmentVisualState() {
     environmentEnabled ? GRID_ENV_MINOR_HEX : GRID_PLAIN_MINOR_HEX
   );
   if (environmentGroup) environmentGroup.visible = environmentEnabled;
+  applySolarLightingState({persist:false, emit:false});
 }
 
 applyEnvironmentVisualState();
@@ -748,6 +1060,20 @@ function setConceptVolumesEnabled(enabled) {
   persistStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, conceptVolumesEnabled);
   requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:conceptVolumes');
+}
+
+function setOfficeEnabled(enabled) {
+  officeEnabled = !!enabled;
+  persistStoredBool(OFFICE_STORAGE_KEY, officeEnabled);
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
+  syncAppStateFromCore('toggle:office');
+}
+
+function setSaunaEnabled(enabled) {
+  saunaEnabled = !!enabled;
+  persistStoredBool(SAUNA_STORAGE_KEY, saunaEnabled);
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
+  syncAppStateFromCore('toggle:sauna');
 }
 
 function setTexturedWallsEnabled(enabled) {
@@ -1754,6 +2080,10 @@ function buildCoreAppStateSnapshot() {
       ...wallState,
     },
     camera: loadCameraState(),
+    solar: {
+      ...solarState,
+      site: {...SOLAR_SITE},
+    },
     site: {
       ...SITE_LAYOUT,
       wallOriginX: WALL_ORIGIN_X,
@@ -1766,6 +2096,8 @@ function buildCoreAppStateSnapshot() {
       trainingCabinetEnabled,
       campusBoardEnabled,
       conceptVolumesEnabled,
+      officeEnabled,
+      saunaEnabled,
       texturedWallsEnabled,
       climbingHoldsEnabled,
       crashMatTextureEnabled,
@@ -1805,6 +2137,9 @@ function applyCoreSnapshotToLegacy(nextState, options={}) {
     persistWallState(WALL_STATE_STORAGE_KEY, wallState);
     needsRebuild = true;
   }
+  if (nextState.solar && typeof nextState.solar === 'object') {
+    setSolarState(nextState.solar, {persist:true, emit:false});
+  }
   if (nextState.toggles && typeof nextState.toggles === 'object') {
     const t = nextState.toggles;
     if (typeof t.crashMatsEnabled === 'boolean') setCrashMatsEnabled(t.crashMatsEnabled);
@@ -1813,6 +2148,8 @@ function applyCoreSnapshotToLegacy(nextState, options={}) {
     if (typeof t.trainingCabinetEnabled === 'boolean') setTrainingCabinetEnabled(t.trainingCabinetEnabled);
     if (typeof t.campusBoardEnabled === 'boolean') setCampusBoardEnabled(t.campusBoardEnabled);
     if (typeof t.conceptVolumesEnabled === 'boolean') setConceptVolumesEnabled(t.conceptVolumesEnabled);
+    if (typeof t.officeEnabled === 'boolean') setOfficeEnabled(t.officeEnabled);
+    if (typeof t.saunaEnabled === 'boolean') setSaunaEnabled(t.saunaEnabled);
     if (typeof t.texturesEnabled === 'boolean') setTexturesEnabled(t.texturesEnabled);
     if (typeof t.climbingHoldsEnabled === 'boolean') setClimbingHoldsEnabled(t.climbingHoldsEnabled);
     if (typeof t.environmentEnabled === 'boolean') setEnvironmentEnabled(t.environmentEnabled);
@@ -1841,4 +2178,9 @@ if (APP_STATE && typeof APP_STATE.patchState === 'function') {
 }
 if (typeof window !== 'undefined') {
   window.syncAppStateFromCore = syncAppStateFromCore;
+  window.getSolarState = getSolarState;
+  window.setSolarState = setSolarState;
+  window.setSolarTimeMinutes = setSolarTimeMinutes;
+  window.saveSolarState = () => saveSolarState(solarState, {emit:true});
+  window.applySolarLightingState = applySolarLightingState;
 }
