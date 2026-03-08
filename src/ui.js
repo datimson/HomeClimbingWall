@@ -221,9 +221,9 @@ const XR_STICK_DEADZONE = 0.16;
 const XR_STICK_CLICK_BUTTON_INDEX = 3;
 // Use only the left X/menu-equivalent button by default.
 // Support both X and Y on the left controller.
-const XR_MENU_BUTTON_INDICES = Object.freeze([3, 4, 5]);
+const XR_MENU_BUTTON_INDICES = Object.freeze([3, 4]);
 const XR_MEASURE_HOLD_BUTTON_INDEX = 3; // Right controller A button.
-const XR_MEASURE_CLEAR_BUTTON_INDICES = Object.freeze([4, 5]); // Right controller B/Y fallback.
+const XR_MEASURE_CLEAR_BUTTON_INDICES = Object.freeze([4]); // Right controller B button.
 const XR_MENU_TOGGLE_COOLDOWN_MS = 280;
 const XR_TELEPORT_MAX_DISTANCE = 20;
 const XR_TELEPORT_SURFACE_EPS = 0.012;
@@ -2353,6 +2353,15 @@ function onVrControllerSelectEnd(event) {
   if (!xrSessionActive) return;
   const state = xrControllers.find(s => s.controller === event?.target);
   if (state) xrActiveControllerIndex = state.index;
+  const controller = state?.controller || event?.target;
+  if (!controller || !readControllerWorldRay(controller)) return;
+  if (vrQuickMenu.open) {
+    const menuHit = getVrMenuInteractiveHit();
+    if (handleVrMenuSelect(menuHit, state?.index ?? null, false)) {
+      if (state) state.suppressWorldSelectUntil = 0;
+      return;
+    }
+  }
   if (vrMenuInteractionController && state) {
     if (vrMenuInteractionController.shouldIgnoreWorldSelectForState(state)) return;
   } else {
@@ -2362,12 +2371,6 @@ function onVrControllerSelectEnd(event) {
       return;
     }
     if (state && consumeVrWorldSelectSuppression(state)) return;
-  }
-  const controller = state?.controller || event?.target;
-  if (!controller || !readControllerWorldRay(controller)) return;
-  if (vrQuickMenu.open) {
-    const menuHit = getVrMenuInteractiveHit();
-    if (handleVrMenuSelect(menuHit, state?.index ?? null, false)) return;
   }
   const interactiveHit = getVrInteractiveHit();
   const vrMeasureHold = updateVrMeasurementHoldState();

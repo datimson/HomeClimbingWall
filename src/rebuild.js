@@ -2827,7 +2827,9 @@ for (int i = 0; i < ${valid.length}; i++) {
   const benchHeightY = 0.44;
   const benchTopT = 0.045;
   const benchGapX = 0.10;
-  const benchLenZ = tableLenZ;
+  const tableLegInsetZForBenchFit = (tableLenZ * 0.5) - (tableLegW * 0.8);
+  const tableLegInnerClearZ = Math.max(0.4, (tableLegInsetZForBenchFit * 2) - tableLegW);
+  const benchLenZ = Math.max(1.2, tableLegInnerClearZ - 0.10);
   const furnitureBaseY = outdoorSlabH;
 
   const furniturePad = 0.16;
