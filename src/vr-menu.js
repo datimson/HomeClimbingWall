@@ -28,6 +28,8 @@
       ROW_HEIGHT: 0.095,
       PADDING_X: 0.08,
       PADDING_Y: 0.05,
+      TEXT_CANVAS_WIDTH: 256,
+      TEXT_CANVAS_HEIGHT: 96,
       RENDER_ORDER_BUMP: 100000,
     });
 
@@ -55,12 +57,13 @@
 
     function makeTextPlane(text, width=0.46, height=0.11, style={}) {
       const canvas = document.createElement('canvas');
-      canvas.width = style.canvasWidth || 512;
-      canvas.height = style.canvasHeight || 128;
+      canvas.width = Math.max(64, Math.round(Number(style.canvasWidth) || constants.TEXT_CANVAS_WIDTH));
+      canvas.height = Math.max(32, Math.round(Number(style.canvasHeight) || constants.TEXT_CANVAS_HEIGHT));
       const ctx = canvas.getContext('2d');
       const tex = new THREE.CanvasTexture(canvas);
       tex.minFilter = THREE.LinearFilter;
       tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
       tex.needsUpdate = true;
       const mat = new THREE.MeshBasicMaterial({
         map: tex,
@@ -337,10 +340,23 @@
       if (!toggleRequested) return false;
       menuToggleCooldownUntil = now + menuToggleCooldownMs;
       if (isMenuOpen()) {
-        if (clearMenu) clearMenu();
+        if (clearMenu) {
+          try {
+            clearMenu();
+          } catch (err) {
+            console.error('VR menu clear failed:', err);
+          }
+        }
         return true;
       }
-      if (buildMenu) return !!buildMenu('S');
+      if (buildMenu) {
+        try {
+          return !!buildMenu('S');
+        } catch (err) {
+          console.error('VR menu toggle build failed:', err);
+          return false;
+        }
+      }
       return false;
     }
 
@@ -620,6 +636,7 @@
     }
 
     function build(target) {
+      try {
       const keys = targetKeys[target];
       if (!keys) return false;
       clear();
@@ -962,6 +979,15 @@
       toolkit.enforceOverlay(group);
       placeDashboard();
       return true;
+      } catch (err) {
+        console.error('VR menu build failed:', err);
+        try {
+          clear();
+        } catch (clearErr) {
+          console.error('VR menu clear-after-build-failure failed:', clearErr);
+        }
+        return false;
+      }
     }
 
     function openForInfo(info) {
