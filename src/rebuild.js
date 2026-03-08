@@ -879,6 +879,7 @@ function rebuild(options={}) {
       const boundaryMin = -FENCE_OFFSET_FROM_ORIGIN;
       const saunaWidthZ = 3.0;
       const saunaRearSetbackX = 0.5;
+      const saunaSlabH = 0.10;
       const saunaLowY = 1.95;
       const saunaHighY = 2.1;
       const saunaRoofT = 0.045;
@@ -926,14 +927,14 @@ function rebuild(options={}) {
       );
       addKeyDim(
         new THREE.Vector3(saunaX0 - 0.52, 0, saunaZ0),
-        new THREE.Vector3(saunaX0 - 0.52, saunaLowY + saunaRoofT, saunaZ0),
-        `Sauna low ${(saunaLowY + saunaRoofT).toFixed(2)}m`,
+        new THREE.Vector3(saunaX0 - 0.52, saunaSlabH + saunaLowY + saunaRoofT, saunaZ0),
+        `Sauna low ${(saunaSlabH + saunaLowY + saunaRoofT).toFixed(2)}m`,
         keySaunaColor
       );
       addKeyDim(
         new THREE.Vector3(saunaX1 + 0.58, 0, saunaZ1),
-        new THREE.Vector3(saunaX1 + 0.58, saunaHighY + saunaRoofT, saunaZ1),
-        `Sauna high ${(saunaHighY + saunaRoofT).toFixed(2)}m`,
+        new THREE.Vector3(saunaX1 + 0.58, saunaSlabH + saunaHighY + saunaRoofT, saunaZ1),
+        `Sauna high ${(saunaSlabH + saunaHighY + saunaRoofT).toFixed(2)}m`,
         keySaunaColor
       );
       addKeyDim(
@@ -2839,12 +2840,18 @@ for (int i = 0; i < ${valid.length}; i++) {
   const usableXMax = slabX1 - Math.max(furniturePad + diningHalfX, kitchenReserveX);
   const usableZMin = slabZ0 + Math.max(furniturePad + diningHalfZ, postReserveZ);
   const usableZMax = slabZ1 - Math.max(furniturePad + diningHalfZ, postReserveZ);
+  const tableShiftTowardWallX = -0.30; // away from house, toward climbing wall
   const tableCenterX = (usableXMin <= usableXMax)
     ? ((usableXMin + usableXMax) * 0.5)
     : THREE.MathUtils.clamp((slabX0 + slabX1) * 0.5, slabX0 + diningHalfX + furniturePad, slabX1 - diningHalfX - furniturePad);
   const tableCenterZ = (usableZMin <= usableZMax)
     ? ((usableZMin + usableZMax) * 0.5)
     : THREE.MathUtils.clamp((slabZ0 + slabZ1) * 0.5, slabZ0 + diningHalfZ + furniturePad, slabZ1 - diningHalfZ - furniturePad);
+  const tableCenterXShifted = THREE.MathUtils.clamp(
+    tableCenterX + tableShiftTowardWallX,
+    slabX0 + diningHalfX + furniturePad,
+    slabX1 - diningHalfX - furniturePad
+  );
 
   const furnitureMat = new THREE.MeshLambertMaterial({ color: 0x4a4d52, side: THREE.DoubleSide });
   const furnitureEdgeMat = new THREE.LineBasicMaterial({ color: 0x2f3237, transparent: true, opacity: 0.62 });
@@ -2883,7 +2890,7 @@ for (int i = 0; i < ${valid.length}; i++) {
 
   // Table.
   const tableTopY = furnitureBaseY + tableHeightY - (tableTopT * 0.5);
-  addSlatTop(tableCenterX, tableTopY, tableCenterZ, tableWidthX, tableLenZ, tableTopT, 10, 'outdoorTable');
+  addSlatTop(tableCenterXShifted, tableTopY, tableCenterZ, tableWidthX, tableLenZ, tableTopT, 10, 'outdoorTable');
   const tableLegH = Math.max(0.08, tableHeightY - tableTopT);
   const tableLegY = furnitureBaseY + (tableLegH * 0.5);
   const tableLegInsetX = (tableWidthX * 0.5) - (tableLegW * 0.7);
@@ -2896,7 +2903,7 @@ for (int i = 0; i < ${valid.length}; i++) {
         tableLegW,
         furnitureMat,
         0, 0, 0,
-        tableCenterX + (sx * tableLegInsetX),
+        tableCenterXShifted + (sx * tableLegInsetX),
         tableLegY,
         tableCenterZ + (sz * tableLegInsetZ)
       ),
@@ -2930,8 +2937,8 @@ for (int i = 0; i < ${valid.length}; i++) {
       );
     });
   };
-  addBench(tableCenterX - benchOffsetX);
-  addBench(tableCenterX + benchOffsetX);
+  addBench(tableCenterXShifted - benchOffsetX);
+  addBench(tableCenterXShifted + benchOffsetX);
 
   // Outdoor area roof + post set.
   // Two tall slab posts: 115x115 timber, 2480mm high.
@@ -3814,15 +3821,16 @@ for (int i = 0; i < ${valid.length}; i++) {
     const saunaWidthZ = 3.0;
     const saunaRearSetbackX = 0.5;
     const saunaWallT = 0.09;
-    const saunaBaseY = 0.0;
-    const saunaLowY = 1.95;  // rear-boundary side
-    const saunaHighY = 2.1;  // outdoor-area side
+    const saunaSlabH = 0.10;
+    const saunaBaseY = saunaSlabH;
+    const saunaLowY = saunaBaseY + 1.95;  // rear-boundary side
+    const saunaHighY = saunaBaseY + 2.1;  // outdoor-area side
     const saunaRoofT = 0.045;
     const saunaRoofOverhangX = 0.06;
     const saunaRoofOverhangZ = 0.06;
     const saunaDoorW = 0.72;
     const saunaDoorH = 1.88;
-    const saunaDoorBottomY = 0.04;
+    const saunaDoorBottomY = saunaBaseY + 0.04;
 
     const saunaX0 = boundaryMin + saunaRearSetbackX;
     const saunaX1 = slabX0;
@@ -3858,7 +3866,7 @@ for (int i = 0; i < ${valid.length}; i++) {
       side: THREE.DoubleSide,
     });
     const saunaRearOuterMat = (typeof makeMonumentAxonMaterial === 'function')
-      ? makeMonumentAxonMaterial(Math.max(0.2, saunaWidthZ), Math.max(0.4, saunaLowY))
+      ? makeMonumentAxonMaterial(Math.max(0.2, saunaWidthZ), Math.max(0.4, saunaLowY - saunaBaseY))
       : saunaOuterMat;
     const saunaInnerMat = new THREE.MeshLambertMaterial({
       color: 0xfff2e1,
@@ -3939,6 +3947,23 @@ for (int i = 0; i < ${valid.length}; i++) {
 
     const xCenter = (saunaX0 + saunaX1) * 0.5;
     const zCenter = (saunaZ0 + saunaZ1) * 0.5;
+    const saunaSlabMat = new THREE.MeshLambertMaterial({ color: 0xbdbbb4, side: THREE.DoubleSide });
+    const saunaSlabEdgeMat = new THREE.LineBasicMaterial({ color: 0x8d8b85, transparent: true, opacity: 0.62 });
+    const saunaSlab = box(
+      saunaX1 - saunaX0,
+      saunaSlabH,
+      saunaWidthZ,
+      saunaSlabMat,
+      0, 0, 0,
+      xCenter,
+      saunaSlabH * 0.5,
+      zCenter
+    );
+    saunaSlab.castShadow = true;
+    saunaSlab.receiveShadow = true;
+    saunaSlab.userData.context = 'saunaSlab';
+    saunaSlab.add(new THREE.LineSegments(new THREE.EdgesGeometry(saunaSlab.geometry), saunaSlabEdgeMat));
+    environmentGroup.add(saunaSlab);
 
     // Rear wall (rear boundary side, lower edge).
     const rearCenterX = saunaX0 + (saunaWallT * 0.5);
@@ -4170,7 +4195,7 @@ for (int i = 0; i < ${valid.length}; i++) {
       saunaInnerMat,
       0, 0, 0,
       (floorX0 + floorX1) * 0.5,
-      0.015,
+      saunaBaseY + 0.015,
       (floorZ0 + floorZ1) * 0.5
     );
     applyWorldBoxUv(saunaFloor.geometry, saunaInnerUvMeters);
@@ -4223,7 +4248,7 @@ for (int i = 0; i < ${valid.length}; i++) {
         addSaunaMesh(slat, `${context}Slat`);
       }
       const supportW = 0.04;
-      const supportH = Math.max(0.1, topY - benchSeatT);
+      const supportH = Math.max(0.1, topY - saunaBaseY - benchSeatT);
       const supportOffset = Math.min(0.38, Math.max(0.12, benchLen * 0.24));
       const supportA = box(
         supportW,
@@ -4232,7 +4257,7 @@ for (int i = 0; i < ${valid.length}; i++) {
         saunaBenchMat,
         0, 0, 0,
         rearX + depth - (supportW * 0.5),
-        supportH * 0.5,
+        saunaBaseY + (supportH * 0.5),
         benchCenterZ - supportOffset
       );
       applyWorldBoxUv(supportA.geometry, saunaBenchUvMeters);
@@ -4251,8 +4276,8 @@ for (int i = 0; i < ${valid.length}; i++) {
       ix0 + 0.06,
       ix1 - lowerBenchDepth - 0.02
     );
-    addSaunaBench(upperBenchRearX, upperBenchDepth, 0.95, 'saunaBenchUpper');
-    addSaunaBench(lowerBenchRearX, lowerBenchDepth, 0.50, 'saunaBenchLower');
+    addSaunaBench(upperBenchRearX, upperBenchDepth, saunaBaseY + 0.95, 'saunaBenchUpper');
+    addSaunaBench(lowerBenchRearX, lowerBenchDepth, saunaBaseY + 0.50, 'saunaBenchLower');
 
     // Sauna heater (street-side wall).
     const heaterBodyMat = new THREE.MeshLambertMaterial({ color: 0x34393f, side: THREE.DoubleSide });
@@ -4270,7 +4295,7 @@ for (int i = 0; i < ${valid.length}; i++) {
       heaterBodyMat,
       0, 0, 0,
       heaterX,
-      heaterH * 0.5,
+      saunaBaseY + (heaterH * 0.5),
       heaterZ
     );
     addSaunaMesh(heaterBody, 'saunaHeater');
@@ -4281,7 +4306,7 @@ for (int i = 0; i < ${valid.length}; i++) {
       heaterBodyMat,
       0, 0, 0,
       heaterX,
-      heaterH + 0.04,
+      saunaBaseY + heaterH + 0.04,
       heaterZ
     );
     addSaunaMesh(heaterTopTray, 'saunaHeater');
@@ -4291,7 +4316,7 @@ for (int i = 0; i < ${valid.length}; i++) {
         const rock = new THREE.Mesh(rockGeo, heaterRockMat);
         rock.position.set(
           heaterX + (rx * 0.055),
-          heaterH + 0.08 + (((rx + rz) & 1) ? 0.012 : 0.0),
+          saunaBaseY + heaterH + 0.08 + (((rx + rz) & 1) ? 0.012 : 0.0),
           heaterZ + (rz * 0.05)
         );
         rock.castShadow = true;
