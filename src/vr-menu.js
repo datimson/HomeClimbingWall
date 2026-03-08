@@ -286,6 +286,15 @@
       if (!controller || !readControllerWorldRay || !readControllerWorldRay(controller)) return false;
       if (!isMenuOpen()) return false;
       const hit = getMenuInteractiveHit ? getMenuInteractiveHit() : null;
+      const action = hit?.object?.userData?.vrMenuAction;
+      if (!action) return false;
+      // Avoid double-firing clicks: start event only begins slider drags.
+      // Discrete button actions execute on select end.
+      if (action.type !== 'sliderTrack') {
+        if (suppressWorldSelectOnce) suppressWorldSelectOnce(state);
+        event?.stopPropagation?.();
+        return true;
+      }
       if (!handleMenuSelect || !handleMenuSelect(hit, state?.index ?? null, true)) return false;
       if (suppressWorldSelectOnce) suppressWorldSelectOnce(state);
       event?.stopPropagation?.();

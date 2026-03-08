@@ -3467,7 +3467,12 @@ for (int i = 0; i < ${valid.length}; i++) {
   // Main side-boundary-facing office window (z0 face): 1810w x 1500h.
   const officeSideMainWindowW = 1.810;
   const officeSideMainWindowH = 1.50;
-  const officeSideMainWindowBottomY = officeSlabTopY + 0.95;
+  const officeSideWindowTopLimit = officeRoofAtZ(officeZ0) - 0.10;
+  const officeSideMainWindowBottomY = THREE.MathUtils.clamp(
+    officeSlabTopY + 0.95,
+    officeSlabTopY + 0.05,
+    officeSideWindowTopLimit - officeSideMainWindowH
+  );
   const officeSideMainWindowTopY = officeSideMainWindowBottomY + officeSideMainWindowH;
   addOfficeOpeningZFace(
     officeZ0,
@@ -3489,7 +3494,12 @@ for (int i = 0; i < ${valid.length}; i++) {
     officeZ0 + officeWallT + (officeRearWindowW * 0.5) + 0.03,
     officeZ1 - officeWallT - (officeRearWindowW * 0.5) - 0.03
   );
-  const officeRearWindowBottomY = officeSideMainWindowTopY - officeRearWindowH;
+  const officeRearWindowTopLimit = officeRoofAtZ(officeRearWindowCenterZ) - 0.10;
+  const officeRearWindowBottomY = THREE.MathUtils.clamp(
+    officeSideMainWindowTopY - officeRearWindowH,
+    officeSlabTopY + 0.05,
+    officeRearWindowTopLimit - officeRearWindowH
+  );
   addOfficeOpeningXFace(
     officeX0,
     -1,

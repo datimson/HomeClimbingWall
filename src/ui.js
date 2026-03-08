@@ -220,13 +220,14 @@ const XR_CONTROLLER_VISUAL_OPACITY = 0.42;
 const XR_STICK_DEADZONE = 0.16;
 const XR_STICK_CLICK_BUTTON_INDEX = 3;
 // Use only the left X/menu-equivalent button by default.
-// Including Y has caused unstable toggling on some Quest mappings.
-const XR_MENU_BUTTON_INDICES = Object.freeze([4]);
+// Support both X and Y on the left controller.
+const XR_MENU_BUTTON_INDICES = Object.freeze([4, 5]);
 const XR_MEASURE_HOLD_BUTTON_INDEX = 4; // Right controller A button.
 const XR_MENU_TOGGLE_COOLDOWN_MS = 280;
 const XR_TELEPORT_MAX_DISTANCE = 20;
 const XR_TELEPORT_SURFACE_EPS = 0.012;
 const XR_FLOOR_SWITCH_HYSTERESIS = 0.06;
+const XR_FRAMEBUFFER_SCALE = 0.82;
 const XR_RAY_COLOR_IDLE = 0xb8dfff;
 const XR_RAY_COLOR_TELEPORT = 0x4dc7ff;
 const XR_RAY_COLOR_INTERACTIVE = 0xffc86a;
@@ -252,6 +253,7 @@ let xrNeedsGroundSnap = false;
 let xrStandingEyeHeight = loadStoredVrUserHeight();
 let xrMenuToggleCooldownUntil = 0;
 let xrMeasureHoldActive = false;
+let xrSavedShadowMapEnabled = null;
 const xrControllers = [];
 let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
@@ -1080,7 +1082,7 @@ function buildVrQuickMenu(target) {
   const width = VR_MENU_BASE_WIDTH;
   const rowH = VR_MENU_ROW_HEIGHT;
   const hasHeightRecalc = target === 'S';
-  const hasMeasureControls = target === 'S' && !!measurementTool;
+  const hasMeasureControls = false;
   const designDefs = target === 'S' ? getVrMenuDesignDefs().filter(def => !!def?.id) : [];
   const hasDesignSwitcher = target === 'S' && designDefs.length > 1;
   const sliderRows = keys.length;
@@ -1557,22 +1559,6 @@ function handleVrMenuSelect(hitOverride=null, controllerIndex=null, preferDrag=f
     clearVrQuickMenu();
     return true;
   }
-  if (action.type === 'measureClear') {
-    if (measurementTool && typeof measurementTool.clearAll === 'function') {
-      measurementTool.clearAll({segments: true, active: true});
-    }
-    return true;
-  }
-  if (action.type === 'measureToggle' && action.key) {
-    if (!measurementTool || typeof measurementTool.setSetting !== 'function') return false;
-    const settings = (typeof measurementTool.getSettings === 'function')
-      ? (measurementTool.getSettings() || {})
-      : {};
-    measurementTool.setSetting(action.key, !settings[action.key]);
-    syncMeasureToggleUi();
-    if (vrQuickMenu.target === 'S') buildVrQuickMenu('S');
-    return true;
-  }
   if (action.type === 'setDesign' && action.designId) {
     return switchDesignAndReload(action.designId);
   }
@@ -1630,6 +1616,12 @@ function onVrControllerSelectStart(event) {
   if (!controller || !readControllerWorldRay(controller)) return;
   if (vrQuickMenu.open) {
     const hit = getVrMenuInteractiveHit();
+    const action = hit?.object?.userData?.vrMenuAction;
+    if (action && action.type !== 'sliderTrack') {
+      suppressVrWorldSelectOnce(state);
+      event?.stopPropagation?.();
+      return;
+    }
     if (handleVrMenuSelect(hit, state?.index ?? null, true)) {
       suppressVrWorldSelectOnce(state);
       event?.stopPropagation?.();
@@ -2495,6 +2487,10 @@ function beginVrSession() {
   xrActiveControllerIndex = 0;
   xrMenuToggleCooldownUntil = 0;
   xrMeasureHoldActive = false;
+  if (renderer?.shadowMap) {
+    xrSavedShadowMapEnabled = !!renderer.shadowMap.enabled;
+    renderer.shadowMap.enabled = false;
+  }
   if (measurementTool && typeof measurementTool.setRuntimeEnabled === 'function') {
     measurementTool.setRuntimeEnabled(false);
   }
@@ -2545,6 +2541,10 @@ function endVrSession() {
   xrActiveControllerIndex = 0;
   xrMenuToggleCooldownUntil = 0;
   xrMeasureHoldActive = false;
+  if (renderer?.shadowMap && xrSavedShadowMapEnabled !== null) {
+    renderer.shadowMap.enabled = !!xrSavedShadowMapEnabled;
+  }
+  xrSavedShadowMapEnabled = null;
   if (measurementTool && typeof measurementTool.setRuntimeEnabled === 'function') {
     measurementTool.setRuntimeEnabled(null);
   }
@@ -2588,6 +2588,9 @@ function setupWebXR() {
         return;
       }
       captureVrStartPosition();
+      if (renderer?.xr?.setFramebufferScaleFactor) {
+        renderer.xr.setFramebufferScaleFactor(XR_FRAMEBUFFER_SCALE);
+      }
       const session = await navigator.xr.requestSession('immersive-vr', XR_SESSION_OPTIONS);
       await renderer.xr.setSession(session);
     } catch (err) {
@@ -3981,7 +3984,7 @@ function animate(now) {
     }
   }
   updateInteractiveAnimations(dt);
-  if (typeof updateGlobalIlluminationFrame === 'function') updateGlobalIlluminationFrame(ts);
+  if (!xrSessionActive && typeof updateGlobalIlluminationFrame === 'function') updateGlobalIlluminationFrame(ts);
   syncSolarTimeReadouts({pushSlider:true});
   if (xrSessionActive) updateVrTimeHudPose();
 
