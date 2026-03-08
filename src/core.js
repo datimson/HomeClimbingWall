@@ -202,8 +202,8 @@ const SITE_LAYOUT = Object.freeze({
   officeDepthZ: 3.00,
   officeRearSetbackX: 1.00,         // from rear/back boundary
   officeStreetSetbackZ: 6.00,       // from street-side boundary
-  officeRoofHighY: 3.00,            // high side (nearest outdoor slab)
-  officeRoofLowY: 2.70,             // low side (nearest street boundary)
+  officeRoofHighY: 2.70,            // high side (nearest outdoor slab)
+  officeRoofLowY: 2.40,             // low side (nearest street boundary)
   officePartitionFromStreetZ: 0.80, // internal wall offset from street-side wall
 });
 
@@ -1104,6 +1104,7 @@ function updateGlobalIlluminationFrame(nowMs) {
     hideForGiCapture(solarSunMarker);
     hideForGiCapture(solarPathPreviewLine);
     hideForGiCapture(dimGroup);
+    hideForGiCapture(keyDimGroup);
     hideForGiCapture(labelGroup);
     hideForGiCapture(hoverDimGroup);
     hideForGiCapture(giLightRig);
@@ -1145,11 +1146,11 @@ function saveSolarState(nextSolarState, {emit=true}={}) {
 
 function applySolarLightingState({persist=false, emit=false}={}) {
   if (!environmentEnabled) {
-    ambientLight.intensity = 0.4;
-    sun.intensity = 1.2;
+    ambientLight.intensity = 0.30;
+    sun.intensity = 0.95;
     sun.color.copy(solarSunColorDay);
     sun.position.copy(defaultSunPos);
-    fill.intensity = 0.3;
+    fill.intensity = 0.22;
     fill.color.copy(solarFillColorDay);
     fill.position.copy(defaultFillPos);
     const focus = getSolarFocusPoint();
@@ -1175,15 +1176,15 @@ function applySolarLightingState({persist=false, emit=false}={}) {
   const focus = getSolarFocusPoint();
   sunTarget.position.copy(focus);
   sun.position.copy(focus).addScaledVector(solarVecDir, 38);
-  sun.intensity = 1.35 * daylight;
+  sun.intensity = 1.10 * daylight;
   sun.castShadow = daylight > 0.08;
   sun.color.copy(solarSunColorNight).lerp(solarSunColorDusk, twilight).lerp(solarSunColorDay, daylight);
 
-  fill.intensity = 0.01 + (0.22 * daylight) + (0.04 * twilight);
+  fill.intensity = 0.01 + (0.17 * daylight) + (0.03 * twilight);
   fill.color.copy(solarFillColorNight).lerp(solarFillColorDusk, twilight).lerp(solarFillColorDay, daylight);
   fill.position.copy(focus).addScaledVector(solarVecDir, -22).add(new THREE.Vector3(0, 4.5, 0));
 
-  ambientLight.intensity = 0.03 + (0.32 * daylight) + (0.03 * (1 - night));
+  ambientLight.intensity = 0.025 + (0.25 * daylight) + (0.02 * (1 - night));
   solarDaylightFactor = daylight;
 
   const sunMarkerOpacity = THREE.MathUtils.clamp((altDeg + 6) / 18, 0, 1);
@@ -1296,6 +1297,9 @@ scene.add(wallGroup);
 let dimGroup  = new THREE.Group();
 dimGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
 scene.add(dimGroup);
+let keyDimGroup = new THREE.Group();
+keyDimGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
+scene.add(keyDimGroup);
 let labelGroup = new THREE.Group();
 labelGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
 scene.add(labelGroup);

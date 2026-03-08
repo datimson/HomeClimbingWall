@@ -219,7 +219,10 @@ const XR_FLY_SPEED_MPS = 1.7;
 const XR_CONTROLLER_VISUAL_OPACITY = 0.42;
 const XR_STICK_DEADZONE = 0.16;
 const XR_STICK_CLICK_BUTTON_INDEX = 3;
-const XR_MENU_BUTTON_INDICES = Object.freeze([5, 4]);
+// Use only the left X/menu-equivalent button by default.
+// Including Y has caused unstable toggling on some Quest mappings.
+const XR_MENU_BUTTON_INDICES = Object.freeze([4]);
+const XR_MENU_TOGGLE_COOLDOWN_MS = 280;
 const XR_TELEPORT_MAX_DISTANCE = 20;
 const XR_TELEPORT_SURFACE_EPS = 0.012;
 const XR_FLOOR_SWITCH_HYSTERESIS = 0.06;
@@ -246,6 +249,7 @@ let xrGroundFloorY = 0;
 let xrActiveControllerIndex = 0;
 let xrNeedsGroundSnap = false;
 let xrStandingEyeHeight = loadStoredVrUserHeight();
+let xrMenuToggleCooldownUntil = 0;
 const xrControllers = [];
 let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
@@ -577,6 +581,7 @@ const vrMenuManager = (
   teleportMaxDistance: XR_TELEPORT_MAX_DISTANCE,
   menuWorldClickSuppressMs: XR_MENU_WORLD_CLICK_SUPPRESS_MS,
   menuButtonIndices: XR_MENU_BUTTON_INDICES,
+  menuToggleCooldownMs: XR_MENU_TOGGLE_COOLDOWN_MS,
   upVector: xrUp,
 }) : null;
 const vrMenuInteractionController = (
@@ -650,6 +655,7 @@ const vrMenuInteractionController = (
       ? vrMenuManager.clear()
       : clearVrQuickMenu()
   ),
+  menuToggleCooldownMs: XR_MENU_TOGGLE_COOLDOWN_MS,
   buildMenu: (target) => (
     vrMenuManager && typeof vrMenuManager.build === 'function'
       ? !!vrMenuManager.build(target)
@@ -2217,8 +2223,11 @@ function readVrMenuButtonPressed(state) {
 }
 
 function updateVrMenuButtonToggle() {
+  const now = performance.now();
+  if (now < xrMenuToggleCooldownUntil) return;
   if (vrMenuInteractionController) {
-    vrMenuInteractionController.updateMenuButtonToggle();
+    const toggled = !!vrMenuInteractionController.updateMenuButtonToggle();
+    if (toggled) xrMenuToggleCooldownUntil = now + XR_MENU_TOGGLE_COOLDOWN_MS;
     return;
   }
   let toggleRequested = false;
@@ -2228,6 +2237,7 @@ function updateVrMenuButtonToggle() {
     state.menuPressedLast = pressed;
   });
   if (!toggleRequested) return;
+  xrMenuToggleCooldownUntil = now + XR_MENU_TOGGLE_COOLDOWN_MS;
   if (vrQuickMenu.open) {
     clearVrQuickMenu();
     return;
@@ -2450,6 +2460,7 @@ function beginVrSession() {
   xrStandingEyeHeight = loadStoredVrUserHeight();
   xrNeedsYawAlignment = !!xrEntryForward;
   xrActiveControllerIndex = 0;
+  xrMenuToggleCooldownUntil = 0;
   xrEntryStartPos = null;
   eSweepAnim.active = false;
   rigToggleAnim.targetDeg = null;
@@ -2495,6 +2506,7 @@ function endVrSession() {
   xrStandingEyeHeight = loadStoredVrUserHeight();
   xrNeedsYawAlignment = false;
   xrActiveControllerIndex = 0;
+  xrMenuToggleCooldownUntil = 0;
   xrEntryStartPos = null;
   xrEntryForward = null;
   xrRig.position.set(0, 0, 0);

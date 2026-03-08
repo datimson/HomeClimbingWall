@@ -377,12 +377,14 @@ function rebuild(options={}) {
   if (plan.geometry) {
     while(wallGroup.children.length) wallGroup.remove(wallGroup.children[0]);
     while(dimGroup.children.length)  dimGroup.remove(dimGroup.children[0]);
+    while(keyDimGroup.children.length) keyDimGroup.remove(keyDimGroup.children[0]);
     while(labelGroup.children.length) labelGroup.remove(labelGroup.children[0]);
     while(hoverDimGroup.children.length) hoverDimGroup.remove(hoverDimGroup.children[0]);
     hoverTargets.length = 0;
     adjPivot = null;
   } else if (plan.annotations) {
     while(dimGroup.children.length)  dimGroup.remove(dimGroup.children[0]);
+    while(keyDimGroup.children.length) keyDimGroup.remove(keyDimGroup.children[0]);
     while(labelGroup.children.length) labelGroup.remove(labelGroup.children[0]);
     while(hoverDimGroup.children.length) hoverDimGroup.remove(hoverDimGroup.children[0]);
   }
@@ -722,6 +724,229 @@ function rebuild(options={}) {
       `${fEdgeToHouse.toFixed(2)}m F->House`,
       siteDimColorHouse
     );
+  }
+
+  // Key dimensions (always visible) for overall planning.
+  if (keyDimGroup) {
+    const addKeyDim = (p1, p2, label, color=0xf0d38a) => addDim(keyDimGroup, p1, p2, label, color);
+    const keyWallColor = 0xf0d38a;
+    const keySiteColor = 0x9fc8ff;
+    const keyOfficeColor = 0xd7f0b1;
+    const keySaunaColor = 0xffd6a1;
+    const keyY = -0.14;
+
+    const wallLowY = roofUnderY(zMin);
+    const wallHighY = roofUnderY(zMax);
+
+    addKeyDim(
+      new THREE.Vector3(xMin, keyY, zMax + 1.02),
+      new THREE.Vector3(xMax, keyY, zMax + 1.02),
+      `Wall W ${(xMax - xMin).toFixed(2)}m`,
+      keyWallColor
+    );
+    addKeyDim(
+      new THREE.Vector3(xMin - 1.02, keyY, zMin),
+      new THREE.Vector3(xMin - 1.02, keyY, zMax),
+      `Wall D ${(zMax - zMin).toFixed(2)}m`,
+      keyWallColor
+    );
+    addKeyDim(
+      new THREE.Vector3(xMax + 0.54, 0, zMin),
+      new THREE.Vector3(xMax + 0.54, wallLowY, zMin),
+      `Wall low ${wallLowY.toFixed(2)}m`,
+      keyWallColor
+    );
+    addKeyDim(
+      new THREE.Vector3(xMax + 0.72, 0, zMax),
+      new THREE.Vector3(xMax + 0.72, wallHighY, zMax),
+      `Wall high ${wallHighY.toFixed(2)}m`,
+      keyWallColor
+    );
+    addKeyDim(
+      new THREE.Vector3(fenceLocalX, keyY, zMin - 0.78),
+      new THREE.Vector3(xMin, keyY, zMin - 0.78),
+      `Rear clr ${fenceGapX.toFixed(2)}m`,
+      keySiteColor
+    );
+    addKeyDim(
+      new THREE.Vector3(xMin - 0.78, keyY, fenceLocalZ),
+      new THREE.Vector3(xMin - 0.78, keyY, zMin),
+      `Side clr ${fenceGapZ.toFixed(2)}m`,
+      keySiteColor
+    );
+    if (fBackToOutdoor > 0.01) {
+      addKeyDim(
+        new THREE.Vector3(fBackDimX + 0.24, keyY, zMax),
+        new THREE.Vector3(fBackDimX + 0.24, keyY, slabNearZ),
+        `F-Slab ${fBackToOutdoor.toFixed(2)}m`,
+        keySiteColor
+      );
+    }
+    if (fEdgeToHouse > 0.01) {
+      addKeyDim(
+        new THREE.Vector3(W, keyY, zMax + 1.22),
+        new THREE.Vector3(houseNearX, keyY, zMax + 1.22),
+        `F-House ${fEdgeToHouse.toFixed(2)}m`,
+        keySiteColor
+      );
+    }
+
+    // Office key dimensions.
+    if (officeEnabled) {
+      const boundaryMin = -FENCE_OFFSET_FROM_ORIGIN;
+      const boundaryMax = boundaryMin + FENCE_LENGTH;
+      const officeX0Scene = boundaryMin + OFFICE_REAR_SETBACK_X;
+      const officeX1Scene = officeX0Scene + OFFICE_WIDTH_X;
+      const officeZ1Scene = boundaryMax - OFFICE_STREET_SETBACK_Z;
+      const officeZ0Scene = officeZ1Scene - OFFICE_DEPTH_Z;
+      const officeSlabH = 0.15;
+      const officeRoofT = 0.075;
+      const officeLowTopY = officeSlabH + OFFICE_ROOF_LOW_Y + officeRoofT;
+      const officeHighTopY = officeSlabH + OFFICE_ROOF_HIGH_Y + officeRoofT;
+      const officeRearSetback = Math.max(0, officeX0Scene - boundaryMin);
+      const officeStreetSetback = Math.max(0, boundaryMax - officeZ1Scene);
+
+      const houseWallZ0Scene2 = HOUSE_SIDE_OFFSET_Z + HOUSE_EAVE_INSET;
+      const houseWallZ1Scene2 = HOUSE_SIDE_OFFSET_Z + HOUSE_LENGTH_Z - HOUSE_EAVE_INSET;
+      const backProjectZ1Scene2 = THREE.MathUtils.clamp(
+        houseWallZ0Scene2 + HOUSE_BACK_WALL_PROJECT_LEN,
+        houseWallZ0Scene2,
+        houseWallZ1Scene2
+      );
+      const wallX0Scene = HOUSE_BACK_OFFSET_X + HOUSE_EAVE_INSET;
+      const slabX1Scene = wallX0Scene;
+      const slabZ0Scene = backProjectZ1Scene2 - OUTDOOR_SLAB_START_ALONG_PROJECTION;
+      const slabZ1Scene = slabZ0Scene + OUTDOOR_SLAB_WIDTH_Z;
+      const officeToSlab = Math.max(0, officeZ0Scene - slabZ1Scene);
+
+      const officeX0 = toDimLocalX(officeX0Scene);
+      const officeX1 = toDimLocalX(officeX1Scene);
+      const officeZ0 = toDimLocalZ(officeZ0Scene);
+      const officeZ1 = toDimLocalZ(officeZ1Scene);
+      const boundaryMinX = toDimLocalX(boundaryMin);
+      const boundaryMaxZ = toDimLocalZ(boundaryMax);
+      const slabZ1 = toDimLocalZ(slabZ1Scene);
+      const officeDimY = keyY - 0.04;
+
+      addKeyDim(
+        new THREE.Vector3(officeX0, officeDimY, officeZ1 + 0.36),
+        new THREE.Vector3(officeX1, officeDimY, officeZ1 + 0.36),
+        `Office W ${OFFICE_WIDTH_X.toFixed(2)}m`,
+        keyOfficeColor
+      );
+      addKeyDim(
+        new THREE.Vector3(officeX1 + 0.40, officeDimY, officeZ0),
+        new THREE.Vector3(officeX1 + 0.40, officeDimY, officeZ1),
+        `Office D ${OFFICE_DEPTH_Z.toFixed(2)}m`,
+        keyOfficeColor
+      );
+      addKeyDim(
+        new THREE.Vector3(officeX1 + 0.60, 0, officeZ0),
+        new THREE.Vector3(officeX1 + 0.60, officeHighTopY, officeZ0),
+        `Office high ${officeHighTopY.toFixed(2)}m`,
+        keyOfficeColor
+      );
+      addKeyDim(
+        new THREE.Vector3(officeX1 + 0.76, 0, officeZ1),
+        new THREE.Vector3(officeX1 + 0.76, officeLowTopY, officeZ1),
+        `Office low ${officeLowTopY.toFixed(2)}m`,
+        keyOfficeColor
+      );
+      addKeyDim(
+        new THREE.Vector3(boundaryMinX, officeDimY, officeZ0 - 0.34),
+        new THREE.Vector3(officeX0, officeDimY, officeZ0 - 0.34),
+        `Office rear ${officeRearSetback.toFixed(2)}m`,
+        keyOfficeColor
+      );
+      addKeyDim(
+        new THREE.Vector3(officeX1 + 0.96, officeDimY, officeZ1),
+        new THREE.Vector3(officeX1 + 0.96, officeDimY, boundaryMaxZ),
+        `Office street ${officeStreetSetback.toFixed(2)}m`,
+        keyOfficeColor
+      );
+      if (officeToSlab > 0.01) {
+        addKeyDim(
+          new THREE.Vector3(officeX1 + 1.12, officeDimY, slabZ1),
+          new THREE.Vector3(officeX1 + 1.12, officeDimY, officeZ0),
+          `Office-Slab ${officeToSlab.toFixed(2)}m`,
+          keyOfficeColor
+        );
+      }
+    }
+
+    // Sauna key dimensions.
+    if (saunaEnabled) {
+      const boundaryMin = -FENCE_OFFSET_FROM_ORIGIN;
+      const saunaWidthZ = 3.0;
+      const saunaDepthX = 1.7;
+      const saunaRearSetbackX = 0.5;
+      const saunaLowY = 1.95;
+      const saunaHighY = 2.1;
+      const saunaRoofT = 0.045;
+
+      const houseWallZ0Scene2 = HOUSE_SIDE_OFFSET_Z + HOUSE_EAVE_INSET;
+      const houseWallZ1Scene2 = HOUSE_SIDE_OFFSET_Z + HOUSE_LENGTH_Z - HOUSE_EAVE_INSET;
+      const backProjectZ1Scene2 = THREE.MathUtils.clamp(
+        houseWallZ0Scene2 + HOUSE_BACK_WALL_PROJECT_LEN,
+        houseWallZ0Scene2,
+        houseWallZ1Scene2
+      );
+      const slabZ0Scene = backProjectZ1Scene2 - OUTDOOR_SLAB_START_ALONG_PROJECTION;
+      const slabZ1Scene = slabZ0Scene + OUTDOOR_SLAB_WIDTH_Z;
+      const slabCenterZScene = (slabZ0Scene + slabZ1Scene) * 0.5;
+
+      const saunaX0Scene = boundaryMin + saunaRearSetbackX;
+      const saunaX1Scene = saunaX0Scene + saunaDepthX;
+      const saunaZ0Scene = slabCenterZScene - (saunaWidthZ * 0.5);
+      const saunaZ1Scene = slabCenterZScene + (saunaWidthZ * 0.5);
+      const saunaRearSetback = Math.max(0, saunaX0Scene - boundaryMin);
+      const saunaSideSetback = Math.max(0, saunaZ0Scene - boundaryMin);
+
+      const saunaX0 = toDimLocalX(saunaX0Scene);
+      const saunaX1 = toDimLocalX(saunaX1Scene);
+      const saunaZ0 = toDimLocalZ(saunaZ0Scene);
+      const saunaZ1 = toDimLocalZ(saunaZ1Scene);
+      const boundaryMinX = toDimLocalX(boundaryMin);
+      const boundaryMinZ = toDimLocalZ(boundaryMin);
+      const saunaDimY = keyY - 0.08;
+
+      addKeyDim(
+        new THREE.Vector3(saunaX0, saunaDimY, saunaZ1 + 0.42),
+        new THREE.Vector3(saunaX1, saunaDimY, saunaZ1 + 0.42),
+        `Sauna D ${saunaDepthX.toFixed(2)}m`,
+        keySaunaColor
+      );
+      addKeyDim(
+        new THREE.Vector3(saunaX1 + 0.42, saunaDimY, saunaZ0),
+        new THREE.Vector3(saunaX1 + 0.42, saunaDimY, saunaZ1),
+        `Sauna W ${saunaWidthZ.toFixed(2)}m`,
+        keySaunaColor
+      );
+      addKeyDim(
+        new THREE.Vector3(saunaX0 - 0.52, 0, saunaZ0),
+        new THREE.Vector3(saunaX0 - 0.52, saunaLowY + saunaRoofT, saunaZ0),
+        `Sauna low ${(saunaLowY + saunaRoofT).toFixed(2)}m`,
+        keySaunaColor
+      );
+      addKeyDim(
+        new THREE.Vector3(saunaX1 + 0.58, 0, saunaZ1),
+        new THREE.Vector3(saunaX1 + 0.58, saunaHighY + saunaRoofT, saunaZ1),
+        `Sauna high ${(saunaHighY + saunaRoofT).toFixed(2)}m`,
+        keySaunaColor
+      );
+      addKeyDim(
+        new THREE.Vector3(boundaryMinX, saunaDimY, saunaZ0 - 0.38),
+        new THREE.Vector3(saunaX0, saunaDimY, saunaZ0 - 0.38),
+        `Sauna rear ${saunaRearSetback.toFixed(2)}m`,
+        keySaunaColor
+      );
+      addKeyDim(
+        new THREE.Vector3(saunaX0 - 0.70, saunaDimY, boundaryMinZ),
+        new THREE.Vector3(saunaX0 - 0.70, saunaDimY, saunaZ0),
+        `Sauna side ${saunaSideSetback.toFixed(2)}m`,
+        keySaunaColor
+      );
+    }
   }
 
   // E adjustability arc

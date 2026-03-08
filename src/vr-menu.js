@@ -268,6 +268,8 @@
     const readMenuButtonPressed = (typeof options.readMenuButtonPressed === 'function') ? options.readMenuButtonPressed : null;
     const clearMenu = (typeof options.clearMenu === 'function') ? options.clearMenu : null;
     const buildMenu = (typeof options.buildMenu === 'function') ? options.buildMenu : null;
+    const menuToggleCooldownMs = Math.max(0, Number(options.menuToggleCooldownMs) || 280);
+    let menuToggleCooldownUntil = 0;
 
     function findStateByController(controllerObj) {
       return getControllers().find(s => s?.controller === controllerObj) || null;
@@ -324,6 +326,8 @@
 
     function updateMenuButtonToggle() {
       if (!readMenuButtonPressed) return false;
+      const now = performance.now();
+      if (now < menuToggleCooldownUntil) return false;
       let toggleRequested = false;
       getControllers().forEach(state => {
         const pressed = readMenuButtonPressed(state);
@@ -331,6 +335,7 @@
         state.menuPressedLast = pressed;
       });
       if (!toggleRequested) return false;
+      menuToggleCooldownUntil = now + menuToggleCooldownMs;
       if (isMenuOpen()) {
         if (clearMenu) clearMenu();
         return true;
@@ -435,7 +440,9 @@
     const applyStickDeadzone = (typeof options.applyStickDeadzone === 'function') ? options.applyStickDeadzone : (v => Number(v) || 0);
     const teleportMaxDistance = Number(options.teleportMaxDistance) || 20;
     const menuWorldClickSuppressMs = Number(options.menuWorldClickSuppressMs) || 260;
-    const menuButtonIndices = Array.isArray(options.menuButtonIndices) ? options.menuButtonIndices : [5, 4];
+    const menuButtonIndices = Array.isArray(options.menuButtonIndices) ? options.menuButtonIndices : [4];
+    const menuToggleCooldownMs = Math.max(0, Number(options.menuToggleCooldownMs) || 280);
+    let menuToggleCooldownUntil = 0;
     const upVector = options.upVector || new THREE.Vector3(0, 1, 0);
 
     const menuRaycaster = new THREE.Raycaster();
@@ -1223,6 +1230,8 @@
     }
 
     function updateMenuButtonToggle() {
+      const now = performance.now();
+      if (now < menuToggleCooldownUntil) return false;
       let toggleRequested = false;
       getControllers().forEach(state => {
         const pressed = readMenuButtonPressed(state);
@@ -1230,6 +1239,7 @@
         state.menuPressedLast = pressed;
       });
       if (!toggleRequested) return false;
+      menuToggleCooldownUntil = now + menuToggleCooldownMs;
       if (quickMenu.open) {
         clear();
         return true;
