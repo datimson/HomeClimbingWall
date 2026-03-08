@@ -1458,6 +1458,18 @@ rebuildFloorSlab();
     color: 0xf6f6f3,
     side: THREE.DoubleSide,
   });
+  const houseInteriorFloorMat = new THREE.MeshStandardMaterial({
+    color: 0xf7f7f5,
+    roughness: 0.90,
+    metalness: 0.02,
+    side: THREE.DoubleSide,
+  });
+  const houseInteriorCeilingMat = new THREE.MeshStandardMaterial({
+    color: 0xf8f8f6,
+    roughness: 0.93,
+    metalness: 0.01,
+    side: THREE.DoubleSide,
+  });
   const houseRoofMat = (typeof claddingMat !== 'undefined' && claddingMat)
     ? claddingMat
     : new THREE.MeshLambertMaterial({ color: 0x4a4d52, side: THREE.DoubleSide });
@@ -2479,6 +2491,59 @@ for (int i = 0; i < ${valid.length}; i++) {
   applyCutoutsToMeshes([houseRearInner], houseRearWallCutouts);
   applyCutoutsToMeshes([laundryInnerLong], laundryWindowCutout);
 
+  // House interior floor + ceiling liners (white), for both main area and laundry projection.
+  const houseInnerFloorY = 0.001;
+  const houseInnerFloorT = 0.016;
+  const houseInnerCeilingY = houseWallHeight - 0.010;
+  const houseInnerCeilingT = 0.016;
+  const addHouseInteriorSlab = (xMin, xMax, zMin, zMax, y, t, mat) => {
+    const w = Math.max(0.01, xMax - xMin);
+    const d = Math.max(0.01, zMax - zMin);
+    if (w <= 0.01 || d <= 0.01) return;
+    const slab = box(
+      w,
+      t,
+      d,
+      mat,
+      0, 0, 0,
+      (xMin + xMax) * 0.5,
+      y + (t * 0.5),
+      (zMin + zMax) * 0.5
+    );
+    slab.userData.context = 'houseInterior';
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    environmentGroup.add(slab);
+  };
+
+  const mainInnerX0 = wallX0 + houseInnerInset;
+  const mainInnerX1 = wallX1 - houseInnerInset;
+  const mainInnerZ0 = wallZ0 + houseInnerInset;
+  const mainInnerZ1 = wallZ1 - houseInnerInset;
+  addHouseInteriorSlab(
+    mainInnerX0, mainInnerX1, mainInnerZ0, mainInnerZ1,
+    houseInnerFloorY, houseInnerFloorT, houseInteriorFloorMat
+  );
+  addHouseInteriorSlab(
+    mainInnerX0, mainInnerX1, mainInnerZ0, mainInnerZ1,
+    houseInnerCeilingY, houseInnerCeilingT, houseInteriorCeilingMat
+  );
+
+  if (laundryDepthX > 0.02 && laundryLenZ > 0.02) {
+    const laundryInnerX0 = houseBackOffsetX + houseInnerInset;
+    const laundryInnerX1 = wallX0 - houseInnerInset;
+    const laundryInnerZ0 = wallZ0 + houseInnerInset;
+    const laundryInnerZ1 = backProjectZ1 - houseInnerInset;
+    addHouseInteriorSlab(
+      laundryInnerX0, laundryInnerX1, laundryInnerZ0, laundryInnerZ1,
+      houseInnerFloorY, houseInnerFloorT, houseInteriorFloorMat
+    );
+    addHouseInteriorSlab(
+      laundryInnerX0, laundryInnerX1, laundryInnerZ0, laundryInnerZ1,
+      houseInnerCeilingY, houseInnerCeilingT, houseInteriorCeilingMat
+    );
+  }
+
   // Concrete path: 0.6m wide around full house footprint (including laundry wall return).
   const pathW = HOUSE_PATH_WIDTH;
   const pathT = HOUSE_PATH_THICKNESS;
@@ -2601,7 +2666,7 @@ for (int i = 0; i < ${valid.length}; i++) {
     const kitchenBaseY = outdoorSlabH + (kitchenBaseH * 0.5);
     const kitchenTopY = outdoorSlabH + kitchenBaseH + (kitchenTopT * 0.5);
     const kitchenBaseMat = new THREE.MeshStandardMaterial({
-      color: 0x737b84,
+      color: 0xf3f4f2,
       roughness: 0.62,
       metalness: 0.18,
       side: THREE.DoubleSide,
@@ -2688,68 +2753,63 @@ for (int i = 0; i < ${valid.length}; i++) {
       returnTop.add(new THREE.LineSegments(new THREE.EdgesGeometry(returnTop.geometry), kitchenTopEdgeMat));
       environmentGroup.add(returnTop);
 
-      // BBQ at the end of the return run.
-      const bbqW = 0.72;
-      const bbqD = 0.58;
-      const bbqH = 0.88;
-      const bbqLidH = 0.22;
-      const bbqMat = new THREE.MeshStandardMaterial({
-        color: 0x2f343a,
-        roughness: 0.42,
-        metalness: 0.72,
+      // BBQ represented as a flush stainless hotplate inset into the return benchtop.
+      // Keep cabinetry as standard bench (no freestanding dark BBQ box).
+      const hotplateW = 0.62;
+      const hotplateD = 0.44;
+      const hotplateT = 0.008;
+      const hotplateInsetFromEnd = 0.05;
+      const hotplateCenterX = kitchenFrontX + hotplateInsetFromEnd + (hotplateW * 0.5);
+      const hotplateCenterZ = returnCenterZ;
+      const hotplateY = kitchenTopY + (kitchenTopT * 0.5) + (hotplateT * 0.5) + 0.0008;
+
+      const hotplateMat = new THREE.MeshStandardMaterial({
+        color: 0xc8cdd2,
+        roughness: 0.30,
+        metalness: 0.88,
         side: THREE.DoubleSide,
       });
-      const bbqTrimMat = new THREE.MeshLambertMaterial({ color: 0xa6acb2, side: THREE.DoubleSide });
-      const bbqEdgeMat = new THREE.LineBasicMaterial({ color: 0x454d55, transparent: true, opacity: 0.72 });
-      const bbqCabinetGap = 0.03;
-      const bbqCenterX = kitchenFrontX - (bbqW * 0.5) - bbqCabinetGap;
-      const bbqCenterZ = returnCenterZ;
-      const bbqBody = box(
-        bbqW,
-        bbqH,
-        bbqD,
-        bbqMat,
-        0, 0, 0,
-        bbqCenterX,
-        outdoorSlabH + (bbqH * 0.5),
-        bbqCenterZ
-      );
-      bbqBody.userData.context = 'outdoorKitchenBqq';
-      bbqBody.castShadow = true;
-      bbqBody.receiveShadow = true;
-      bbqBody.add(new THREE.LineSegments(new THREE.EdgesGeometry(bbqBody.geometry), bbqEdgeMat));
-      environmentGroup.add(bbqBody);
+      const hotplateEdgeMat = new THREE.LineBasicMaterial({ color: 0x69727b, transparent: true, opacity: 0.70 });
 
-      const bbqLid = box(
-        bbqW,
-        bbqLidH,
-        bbqD * 0.92,
-        bbqMat,
+      const hotplate = box(
+        hotplateW,
+        hotplateT,
+        hotplateD,
+        hotplateMat,
         0, 0, 0,
-        bbqCenterX,
-        outdoorSlabH + bbqH + (bbqLidH * 0.5),
-        bbqCenterZ
+        hotplateCenterX,
+        hotplateY,
+        hotplateCenterZ
       );
-      bbqLid.userData.context = 'outdoorKitchenBqq';
-      bbqLid.castShadow = true;
-      bbqLid.receiveShadow = true;
-      bbqLid.add(new THREE.LineSegments(new THREE.EdgesGeometry(bbqLid.geometry), bbqEdgeMat));
-      environmentGroup.add(bbqLid);
+      hotplate.userData.context = 'outdoorKitchenBqq';
+      hotplate.castShadow = true;
+      hotplate.receiveShadow = true;
+      hotplate.add(new THREE.LineSegments(new THREE.EdgesGeometry(hotplate.geometry), hotplateEdgeMat));
+      environmentGroup.add(hotplate);
 
-      const bbqShelf = box(
-        0.04,
-        0.02,
-        bbqD * 0.98,
-        bbqTrimMat,
-        0, 0, 0,
-        bbqCenterX - (bbqW * 0.5) - 0.02,
-        outdoorSlabH + bbqH * 0.76,
-        bbqCenterZ
-      );
-      bbqShelf.userData.context = 'outdoorKitchenBqq';
-      bbqShelf.castShadow = true;
-      bbqShelf.receiveShadow = true;
-      environmentGroup.add(bbqShelf);
+      // Subtle cooktop rails to read as a stainless hotplate.
+      const railT = 0.004;
+      const railH = 0.006;
+      const railInset = 0.016;
+      const railMat = new THREE.MeshStandardMaterial({
+        color: 0xaeb5bc,
+        roughness: 0.34,
+        metalness: 0.86,
+        side: THREE.DoubleSide,
+      });
+      const railY = hotplateY + (hotplateT * 0.5) + (railH * 0.5);
+      const railLenX = hotplateW - (railInset * 2);
+      const railLenZ = hotplateD - (railInset * 2);
+      const railNorth = box(railLenX, railH, railT, railMat, 0, 0, 0, hotplateCenterX, railY, hotplateCenterZ - (railLenZ * 0.5));
+      const railSouth = box(railLenX, railH, railT, railMat, 0, 0, 0, hotplateCenterX, railY, hotplateCenterZ + (railLenZ * 0.5));
+      const railWest = box(railT, railH, railLenZ, railMat, 0, 0, 0, hotplateCenterX - (railLenX * 0.5), railY, hotplateCenterZ);
+      const railEast = box(railT, railH, railLenZ, railMat, 0, 0, 0, hotplateCenterX + (railLenX * 0.5), railY, hotplateCenterZ);
+      [railNorth, railSouth, railWest, railEast].forEach(rail => {
+        rail.userData.context = 'outdoorKitchenBqq';
+        rail.castShadow = true;
+        rail.receiveShadow = true;
+        environmentGroup.add(rail);
+      });
     }
   }
 
