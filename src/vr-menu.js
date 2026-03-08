@@ -440,10 +440,6 @@
       : null;
     const getSolarMonth = (typeof options.getSolarMonth === 'function') ? options.getSolarMonth : (() => 1);
     const setSolarMonth = (typeof options.setSolarMonth === 'function') ? options.setSolarMonth : null;
-    const getMeasurementSettings = (typeof options.getMeasurementSettings === 'function') ? options.getMeasurementSettings : (() => null);
-    const setMeasurementSetting = (typeof options.setMeasurementSetting === 'function') ? options.setMeasurementSetting : null;
-    const clearMeasurements = (typeof options.clearMeasurements === 'function') ? options.clearMeasurements : null;
-    const syncMeasureUi = (typeof options.syncMeasureUi === 'function') ? options.syncMeasureUi : null;
     const getSceneToggleStates = (typeof options.getSceneToggleStates === 'function')
       ? options.getSceneToggleStates
       : (() => null);
@@ -646,10 +642,6 @@
       const hasHeightRecalc = target === 'S';
       const designDefs = target === 'S' ? getDesignDefs().filter(def => !!def?.id) : [];
       const hasDesignSwitcher = target === 'S' && designDefs.length > 1;
-      const measurementSettings = getMeasurementSettings();
-      const hasMeasureControls = target === 'S'
-        && !!measurementSettings
-        && (typeof setMeasurementSetting === 'function' || typeof clearMeasurements === 'function');
       const sceneToggleStates = getSceneToggleStates();
       const sceneToggleDefs = [];
       if (sceneToggleStates && typeof setSceneToggle === 'function') {
@@ -671,7 +663,6 @@
       const sliderRows = keys.length;
       const extraRows = (hasHeightRecalc ? 1 : 0)
         + (hasDesignSwitcher ? 1 : 0)
-        + (hasMeasureControls ? 1 : 0)
         + (hasSceneToggleControls ? 1 : 0);
       const hasRows = (sliderRows + extraRows) > 0;
       const height = hasRows ? (0.20 + (sliderRows + extraRows) * rowH) : 0.28;
@@ -884,48 +875,10 @@
           interactive.push(autoBtn);
         }
 
-        if (hasMeasureControls) {
-          const measureOffset = keys.length + rowCursor + (hasHeightRecalc ? 1 : 0);
-          const y = halfH - 0.155 - measureOffset * rowH;
-          const settings = measurementSettings || {};
-          const label = toolkit.makeTextPlane('Measure', labelW, 0.07, {
-            color: C.TEXT_DARK_COLOR,
-            fontPx: 50,
-            fontWeight: '700',
-            align: 'left',
-            padding: 18,
-          });
-          label.position.set(leftLabelX, y, 0.004);
-          group.add(label);
-
-          const areaLeft = innerLeft + labelW + gapA;
-          const areaWidth = innerWidth - labelW - gapA;
-          const btnGap = 0.012;
-          const btnW = Math.max(0.07, (areaWidth - (btnGap * 4)) / 5);
-          const btnH = 0.058;
-          const defs = [
-            {label: settings.enabled ? 'On' : 'Off', action: {type: 'measureToggle', key: 'enabled'}, active: !!settings.enabled},
-            {label: 'Surf', action: {type: 'measureToggle', key: 'snapToSurfaces'}, active: !!settings.snapToSurfaces},
-            {label: 'Edge', action: {type: 'measureToggle', key: 'snapToEdges'}, active: !!settings.snapToEdges},
-            {label: 'Vert', action: {type: 'measureToggle', key: 'snapToVertices'}, active: !!settings.snapToVertices},
-            {label: 'Clear', action: {type: 'measureClear'}, active: false},
-          ];
-          defs.forEach((def, idx) => {
-            const x = areaLeft + (btnW * 0.5) + idx * (btnW + btnGap);
-            const color = def.label === 'Clear' ? 0xc8a9a9 : (def.active ? 0x8ca974 : C.NUDGE_COLOR);
-            const btn = toolkit.makeButton(def.label, btnW, btnH, color);
-            btn.position.set(x, y, 0.003);
-            btn.userData.vrMenuAction = def.action;
-            group.add(btn);
-            interactive.push(btn);
-          });
-        }
-
         if (hasSceneToggleControls) {
           const sceneOffset = keys.length
             + rowCursor
-            + (hasHeightRecalc ? 1 : 0)
-            + (hasMeasureControls ? 1 : 0);
+            + (hasHeightRecalc ? 1 : 0);
           const y = halfH - 0.155 - sceneOffset * rowH;
           const label = toolkit.makeTextPlane('Scene', labelW, 0.07, {
             color: C.TEXT_DARK_COLOR,
@@ -1156,18 +1109,6 @@
       }
       if (action.type === 'close') {
         clear();
-        return true;
-      }
-      if (action.type === 'measureClear') {
-        if (clearMeasurements) clearMeasurements({segments: true, active: true});
-        return true;
-      }
-      if (action.type === 'measureToggle' && action.key) {
-        if (!setMeasurementSetting) return false;
-        const settings = getMeasurementSettings() || {};
-        setMeasurementSetting(action.key, !settings[action.key]);
-        if (syncMeasureUi) syncMeasureUi();
-        if (quickMenu.target === 'S') build('S');
         return true;
       }
       if (action.type === 'sceneToggle' && action.key) {

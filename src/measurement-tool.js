@@ -85,6 +85,7 @@
       startMeta: null,
       previewMeta: null,
       segments: [],
+      runtimeEnabledOverride: null,
     };
 
     const overlayGroup = new THREE.Group();
@@ -132,6 +133,11 @@
       const dz = end.z - start.z;
       const dist = Math.hypot(dx, dy, dz);
       return `${dist.toFixed(3)}m`;
+    }
+
+    function isRuntimeEnabled() {
+      if (typeof state.runtimeEnabledOverride === 'boolean') return state.runtimeEnabledOverride;
+      return !!state.settings.enabled;
     }
 
     function drawMeasureMarker(point, color=0xffaa55, size=0.05) {
@@ -335,7 +341,7 @@
     }
 
     function pointerMove(clientX, clientY) {
-      if (!state.settings.enabled || !state.start) return false;
+      if (!isRuntimeEnabled() || !state.start) return false;
       const snap = pickMeasurementPoint(clientX, clientY);
       if (!snap) return true;
       state.preview = snap.point.clone();
@@ -348,7 +354,7 @@
     }
 
     function rayPreviewFromHit(hit) {
-      if (!state.settings.enabled || !state.start) return false;
+      if (!isRuntimeEnabled() || !state.start) return false;
       const snap = resolveMeasurementSnap(hit);
       if (!snap) return false;
       state.preview = snap.point.clone();
@@ -367,7 +373,7 @@
     }
 
     function raySelectFromHit(hit) {
-      if (!state.settings.enabled) return false;
+      if (!isRuntimeEnabled()) return false;
       const snap = resolveMeasurementSnap(hit);
       if (!snap) return false;
 
@@ -401,7 +407,7 @@
     }
 
     function pointerDown(eventLike) {
-      if (!state.settings.enabled) return false;
+      if (!isRuntimeEnabled()) return false;
       if (eventLike?.button !== 0) return false;
       const clientX = Number(eventLike?.clientX);
       const clientY = Number(eventLike?.clientY);
@@ -423,7 +429,7 @@
     }
 
     function pointerUp(eventLike) {
-      if (!state.settings.enabled || !state.dragging) return false;
+      if (!isRuntimeEnabled() || !state.dragging) return false;
       if (eventLike?.button !== 0) return false;
       state.dragging = false;
       if (!state.start || !state.preview) return true;
@@ -465,6 +471,21 @@
       return true;
     }
 
+    function setRuntimeEnabled(enabledOrNull) {
+      if (enabledOrNull === null || typeof enabledOrNull === 'undefined') {
+        state.runtimeEnabledOverride = null;
+      } else {
+        state.runtimeEnabledOverride = !!enabledOrNull;
+      }
+      if (!isRuntimeEnabled()) {
+        state.preview = null;
+        state.previewMeta = null;
+      }
+      render();
+      syncToAppState('ui:measure:runtimeEnabled');
+      return true;
+    }
+
     function getSettings() {
       return {...state.settings};
     }
@@ -479,8 +500,9 @@
       cancelActive,
       clearAll,
       setSetting,
+      setRuntimeEnabled,
       getSettings,
-      isEnabled: () => !!state.settings.enabled,
+      isEnabled: () => isRuntimeEnabled(),
       isDragging: () => !!state.dragging,
       render,
       syncState: syncToAppState,

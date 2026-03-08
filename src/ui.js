@@ -222,6 +222,7 @@ const XR_STICK_CLICK_BUTTON_INDEX = 3;
 // Use only the left X/menu-equivalent button by default.
 // Including Y has caused unstable toggling on some Quest mappings.
 const XR_MENU_BUTTON_INDICES = Object.freeze([4]);
+const XR_MEASURE_HOLD_BUTTON_INDEX = 4; // Right controller A button.
 const XR_MENU_TOGGLE_COOLDOWN_MS = 280;
 const XR_TELEPORT_MAX_DISTANCE = 20;
 const XR_TELEPORT_SURFACE_EPS = 0.012;
@@ -250,6 +251,7 @@ let xrActiveControllerIndex = 0;
 let xrNeedsGroundSnap = false;
 let xrStandingEyeHeight = loadStoredVrUserHeight();
 let xrMenuToggleCooldownUntil = 0;
+let xrMeasureHoldActive = false;
 const xrControllers = [];
 let xrControllersReady = false;
 const xrForward = new THREE.Vector3();
@@ -2245,6 +2247,34 @@ function updateVrMenuButtonToggle() {
   buildVrQuickMenu('S');
 }
 
+function readVrMeasureHoldPressed(state) {
+  if (!state?.connected || state.handedness !== 'right') return false;
+  const buttons = state.inputSource?.gamepad?.buttons;
+  if (!buttons?.length) return false;
+  return !!buttons[XR_MEASURE_HOLD_BUTTON_INDEX]?.pressed;
+}
+
+function updateVrMeasurementHoldState() {
+  if (!xrSessionActive) {
+    xrMeasureHoldActive = false;
+    if (measurementTool && typeof measurementTool.setRuntimeEnabled === 'function') {
+      measurementTool.setRuntimeEnabled(null);
+    }
+    return false;
+  }
+  const next = xrControllers.some(readVrMeasureHoldPressed);
+  if (next !== xrMeasureHoldActive) {
+    xrMeasureHoldActive = next;
+    if (measurementTool && typeof measurementTool.setRuntimeEnabled === 'function') {
+      measurementTool.setRuntimeEnabled(xrMeasureHoldActive);
+    }
+    if (!xrMeasureHoldActive && measurementTool && typeof measurementTool.rayClearPreview === 'function') {
+      measurementTool.rayClearPreview();
+    }
+  }
+  return xrMeasureHoldActive;
+}
+
 function handleVrInteractiveClick(hit) {
   const info = hit?.object?.userData?.sectionInfo;
   if (!info) return false;
@@ -2272,15 +2302,16 @@ function onVrControllerSelectEnd(event) {
     if (handleVrMenuSelect(menuHit, state?.index ?? null, false)) return;
   }
   const interactiveHit = getVrInteractiveHit();
+  const vrMeasureHold = updateVrMeasurementHoldState();
   if (
     interactiveHit &&
     !vrQuickMenu.open &&
+    vrMeasureHold &&
     measurementTool &&
-    typeof measurementTool.isEnabled === 'function' &&
-    measurementTool.isEnabled() &&
     typeof measurementTool.raySelectFromHit === 'function'
   ) {
-    if (measurementTool.raySelectFromHit(interactiveHit)) return;
+    measurementTool.raySelectFromHit(interactiveHit);
+    return;
   }
   if (handleVrInteractiveClick(interactiveHit)) return;
   const maxFloorDist = interactiveHit ? Math.max(0.06, interactiveHit.distance - 0.02) : XR_TELEPORT_MAX_DISTANCE;
@@ -2306,6 +2337,7 @@ function updateVrControllerPointers() {
   }
 
   updateActiveControllerFromButtons();
+  const vrMeasureHold = updateVrMeasurementHoldState();
   const xrCam = renderer.xr.getCamera(camera);
   if (xrCam) xrCam.updateMatrixWorld(true);
   let hoveredSliderKey = null;
@@ -2389,9 +2421,8 @@ function updateVrControllerPointers() {
 
   if (
     !vrQuickMenu.open &&
+    vrMeasureHold &&
     measurementTool &&
-    typeof measurementTool.isEnabled === 'function' &&
-    measurementTool.isEnabled() &&
     typeof measurementTool.rayPreviewFromHit === 'function'
   ) {
     const previewState = xrControllers.find(state =>
@@ -2402,6 +2433,8 @@ function updateVrControllerPointers() {
     const previewHit = previewState?.interactiveHit || null;
     if (previewHit) measurementTool.rayPreviewFromHit(previewHit);
     else if (typeof measurementTool.rayClearPreview === 'function') measurementTool.rayClearPreview();
+  } else if (measurementTool && typeof measurementTool.rayClearPreview === 'function') {
+    measurementTool.rayClearPreview();
   }
 
   setVrMenuSliderHoverKey(hoveredSliderKey);
@@ -2461,6 +2494,10 @@ function beginVrSession() {
   xrNeedsYawAlignment = !!xrEntryForward;
   xrActiveControllerIndex = 0;
   xrMenuToggleCooldownUntil = 0;
+  xrMeasureHoldActive = false;
+  if (measurementTool && typeof measurementTool.setRuntimeEnabled === 'function') {
+    measurementTool.setRuntimeEnabled(false);
+  }
   xrEntryStartPos = null;
   eSweepAnim.active = false;
   rigToggleAnim.targetDeg = null;
@@ -2507,6 +2544,10 @@ function endVrSession() {
   xrNeedsYawAlignment = false;
   xrActiveControllerIndex = 0;
   xrMenuToggleCooldownUntil = 0;
+  xrMeasureHoldActive = false;
+  if (measurementTool && typeof measurementTool.setRuntimeEnabled === 'function') {
+    measurementTool.setRuntimeEnabled(null);
+  }
   xrEntryStartPos = null;
   xrEntryForward = null;
   xrRig.position.set(0, 0, 0);

@@ -800,9 +800,8 @@ function rebuild(options={}) {
       const officeZ1Scene = boundaryMax - OFFICE_STREET_SETBACK_Z;
       const officeZ0Scene = officeZ1Scene - OFFICE_DEPTH_Z;
       const officeSlabH = 0.15;
-      const officeRoofT = 0.075;
-      const officeLowTopY = officeSlabH + OFFICE_ROOF_LOW_Y + officeRoofT;
-      const officeHighTopY = officeSlabH + OFFICE_ROOF_HIGH_Y + officeRoofT;
+      const officeLowTopY = OFFICE_ROOF_LOW_Y;
+      const officeHighTopY = OFFICE_ROOF_HIGH_Y;
       const officeRearSetback = Math.max(0, officeX0Scene - boundaryMin);
       const officeStreetSetback = Math.max(0, boundaryMax - officeZ1Scene);
 
@@ -3086,9 +3085,11 @@ for (int i = 0; i < ${valid.length}; i++) {
     const officeWallT = 0.11; // timber framing + plasterboard build-up
     const officeSlabH = 0.15;
     const officeSlabTopY = officeSlabH;
-    const officeHighY = OFFICE_ROOF_HIGH_Y + officeSlabTopY;
-    const officeLowY = OFFICE_ROOF_LOW_Y + officeSlabTopY;
     const officeRoofT = 0.075;
+    const officeTopHighY = OFFICE_ROOF_HIGH_Y;
+    const officeTopLowY = OFFICE_ROOF_LOW_Y;
+    const officeHighY = Math.max(officeSlabTopY + 0.25, officeTopHighY - officeRoofT);
+    const officeLowY = Math.max(officeSlabTopY + 0.25, officeTopLowY - officeRoofT);
     const officeEdgeMat = new THREE.LineBasicMaterial({ color: 0x6d7178, transparent: true, opacity: 0.75 });
     const officeInnerWallMat = new THREE.MeshLambertMaterial({ color: 0xf6f6f3, side: THREE.DoubleSide });
     const officeRoofMat = (typeof claddingMat !== 'undefined' && claddingMat && typeof claddingMat.clone === 'function')
