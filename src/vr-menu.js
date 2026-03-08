@@ -417,10 +417,16 @@
     const recalcXrStandingEyeHeightFromHead = (typeof options.recalcXrStandingEyeHeightFromHead === 'function')
       ? options.recalcXrStandingEyeHeightFromHead
       : null;
+    const getSolarMonth = (typeof options.getSolarMonth === 'function') ? options.getSolarMonth : (() => 1);
+    const setSolarMonth = (typeof options.setSolarMonth === 'function') ? options.setSolarMonth : null;
     const getMeasurementSettings = (typeof options.getMeasurementSettings === 'function') ? options.getMeasurementSettings : (() => null);
     const setMeasurementSetting = (typeof options.setMeasurementSetting === 'function') ? options.setMeasurementSetting : null;
     const clearMeasurements = (typeof options.clearMeasurements === 'function') ? options.clearMeasurements : null;
     const syncMeasureUi = (typeof options.syncMeasureUi === 'function') ? options.syncMeasureUi : null;
+    const getSceneToggleStates = (typeof options.getSceneToggleStates === 'function')
+      ? options.getSceneToggleStates
+      : (() => null);
+    const setSceneToggle = (typeof options.setSceneToggle === 'function') ? options.setSceneToggle : null;
     const readControllerWorldRay = (typeof options.readControllerWorldRay === 'function') ? options.readControllerWorldRay : null;
     const getRayOrigin = (typeof options.getRayOrigin === 'function') ? options.getRayOrigin : null;
     const getRayDirection = (typeof options.getRayDirection === 'function') ? options.getRayDirection : null;
@@ -450,6 +456,7 @@
         return Number.isFinite(raw) ? raw : def.min;
       }
       if (key === 'userHeight') return getXrStandingEyeHeight();
+      if (key === 'solarMonth') return getSolarMonth();
       const raw = Number(getWallState()?.[key]);
       return Number.isFinite(raw) ? raw : def.min;
     }
@@ -545,6 +552,11 @@
         refreshValues();
         return;
       }
+      if (key === 'solarMonth') {
+        if (setSolarMonth) setSolarMonth(clamped, {persist: true});
+        refreshValues();
+        return;
+      }
       if (key === 'eAngle') {
         if (stopESweep) stopESweep();
         if (setEAngleValue) setEAngleValue(clamped);
@@ -614,8 +626,29 @@
       const hasMeasureControls = target === 'S'
         && !!measurementSettings
         && (typeof setMeasurementSetting === 'function' || typeof clearMeasurements === 'function');
+      const sceneToggleStates = getSceneToggleStates();
+      const sceneToggleDefs = [];
+      if (sceneToggleStates && typeof setSceneToggle === 'function') {
+        if (Object.prototype.hasOwnProperty.call(sceneToggleStates, 'officeEnabled')) {
+          sceneToggleDefs.push({ key: 'officeEnabled', label: 'Office' });
+        }
+        if (Object.prototype.hasOwnProperty.call(sceneToggleStates, 'saunaEnabled')) {
+          sceneToggleDefs.push({ key: 'saunaEnabled', label: 'Sauna' });
+        }
+        if (Object.prototype.hasOwnProperty.call(sceneToggleStates, 'outdoorKitchenEnabled')) {
+          sceneToggleDefs.push({ key: 'outdoorKitchenEnabled', label: 'Kitchen' });
+        }
+        if (Object.prototype.hasOwnProperty.call(sceneToggleStates, 'globalIlluminationEnabled')) {
+          sceneToggleDefs.push({ key: 'globalIlluminationEnabled', label: 'GI' });
+        }
+      }
+      const hasSceneToggleControls = target === 'S'
+        && sceneToggleDefs.length > 0;
       const sliderRows = keys.length;
-      const extraRows = (hasHeightRecalc ? 1 : 0) + (hasDesignSwitcher ? 1 : 0) + (hasMeasureControls ? 1 : 0);
+      const extraRows = (hasHeightRecalc ? 1 : 0)
+        + (hasDesignSwitcher ? 1 : 0)
+        + (hasMeasureControls ? 1 : 0)
+        + (hasSceneToggleControls ? 1 : 0);
       const hasRows = (sliderRows + extraRows) > 0;
       const height = hasRows ? (0.20 + (sliderRows + extraRows) * rowH) : 0.28;
       const halfW = width * 0.5;
@@ -863,6 +896,41 @@
             interactive.push(btn);
           });
         }
+
+        if (hasSceneToggleControls) {
+          const sceneOffset = keys.length
+            + rowCursor
+            + (hasHeightRecalc ? 1 : 0)
+            + (hasMeasureControls ? 1 : 0);
+          const y = halfH - 0.155 - sceneOffset * rowH;
+          const label = toolkit.makeTextPlane('Scene', labelW, 0.07, {
+            color: C.TEXT_DARK_COLOR,
+            fontPx: 50,
+            fontWeight: '700',
+            align: 'left',
+            padding: 18,
+          });
+          label.position.set(leftLabelX, y, 0.004);
+          group.add(label);
+
+          const areaLeft = innerLeft + labelW + gapA;
+          const areaWidth = innerWidth - labelW - gapA;
+          const btnGap = 0.012;
+          const btnCount = Math.max(1, sceneToggleDefs.length);
+          const btnW = Math.max(0.12, (areaWidth - (btnGap * Math.max(0, btnCount - 1))) / btnCount);
+          const btnH = 0.058;
+          sceneToggleDefs.forEach((def, idx) => {
+            const active = !!sceneToggleStates[def.key];
+            const btnLabel = active ? `${def.label} On` : `${def.label} Off`;
+            const btnColor = active ? 0x8ca974 : C.NUDGE_COLOR;
+            const x = areaLeft + (btnW * 0.5) + idx * (btnW + btnGap);
+            const btn = toolkit.makeButton(btnLabel, btnW, btnH, btnColor);
+            btn.position.set(x, y, 0.003);
+            btn.userData.vrMenuAction = {type: 'sceneToggle', key: def.key};
+            group.add(btn);
+            interactive.push(btn);
+          });
+        }
       } else {
         const msg = toolkit.makeTextPlane('No adjustable sliders', 0.58, 0.10, {
           color: C.TEXT_DARK_COLOR,
@@ -1068,6 +1136,14 @@
         if (syncMeasureUi) syncMeasureUi();
         if (quickMenu.target === 'S') build('S');
         return true;
+      }
+      if (action.type === 'sceneToggle' && action.key) {
+        if (!setSceneToggle || !getSceneToggleStates) return false;
+        const toggles = getSceneToggleStates() || {};
+        const curr = !!toggles[action.key];
+        const ok = setSceneToggle(action.key, !curr) !== false;
+        if (ok && quickMenu.target === 'S') build('S');
+        return ok;
       }
       if (action.type === 'setDesign' && action.designId) {
         return switchDesignAndReload ? !!switchDesignAndReload(action.designId) : false;

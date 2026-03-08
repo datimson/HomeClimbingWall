@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Climbing Wall – Design Brief</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lights/LightProbeGenerator.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/XRControllerModelFactory.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <link rel="stylesheet" href="styles/main.css">
@@ -94,6 +95,19 @@
         </div>
       </div>
       <div class="toggle-row">
+        <label class="toggle-label" for="globalIlluminationToggle">Global Illumination</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="globalIlluminationToggle">
+          <span class="toggle-meta">dynamic probe lighting</span>
+        </div>
+      </div>
+      <div class="angle-row">
+        <label>GI Quality</label>
+        <input type="range" id="globalIlluminationQualitySlider" min="0" max="3" value="2" step="1">
+        <span class="angle-val" id="globalIlluminationQualityLabel">Medium</span>
+      </div>
+      <div class="control-note">Off / Low / Medium / High</div>
+      <div class="toggle-row">
         <label class="toggle-label" for="officeToggle">Office Building</label>
         <div class="toggle-input-wrap">
           <input type="checkbox" id="officeToggle">
@@ -105,6 +119,13 @@
         <div class="toggle-input-wrap">
           <input type="checkbox" id="saunaToggle">
           <span class="toggle-meta">timber + cedar interior</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label" for="outdoorKitchenToggle">Outdoor Kitchen</label>
+        <div class="toggle-input-wrap">
+          <input type="checkbox" id="outdoorKitchenToggle">
+          <span class="toggle-meta">L-shape + BBQ</span>
         </div>
       </div>
       <div class="toggle-row">
@@ -159,7 +180,12 @@
         <input type="range" id="solarTimeSlider" min="0" max="1439" value="840" step="1">
         <span class="angle-val angle-val--time" id="solarTimeLabel">14:00</span>
       </div>
-      <div class="control-note">Desktop: use this slider. VR: point at the sky and drag.</div>
+      <div class="angle-row">
+        <label>Month</label>
+        <input type="range" id="solarMonthSlider" min="1" max="12" value="3" step="1">
+        <span class="angle-val" id="solarMonthLabel">Mar</span>
+      </div>
+      <div class="control-note">Desktop: use sliders. VR: hold grip on sky and drag to scrub time, or use Month in Wall Size menu.</div>
     </div>
 
     <div class="section section-collapsible">

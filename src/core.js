@@ -48,6 +48,55 @@ scene.add(sun);
 const fill = new THREE.DirectionalLight(0xc0d0ff, 0.3);
 fill.position.set(-5, 3, -3);
 scene.add(fill);
+const giLightRig = new THREE.Group();
+giLightRig.visible = false;
+scene.add(giLightRig);
+const giHemiLight = new THREE.HemisphereLight(0xdde8ff, 0x8f775f, 0.0);
+giLightRig.add(giHemiLight);
+const giWarmBounce = new THREE.DirectionalLight(0xffe7c8, 0.0);
+giWarmBounce.castShadow = false;
+giLightRig.add(giWarmBounce);
+const giCoolBounce = new THREE.DirectionalLight(0xbfd2ff, 0.0);
+giCoolBounce.castShadow = false;
+giLightRig.add(giCoolBounce);
+const giRearBounce = new THREE.DirectionalLight(0xfff0df, 0.0);
+giRearBounce.castShadow = false;
+giLightRig.add(giRearBounce);
+const GI_QUALITY_PRESETS = Object.freeze({
+  low: Object.freeze({
+    captureResolution: 16,
+    desktopUpdateMs: 700,
+    xrUpdateMs: 1400,
+    intensityScale: 0.92,
+  }),
+  medium: Object.freeze({
+    captureResolution: 24,
+    desktopUpdateMs: 360,
+    xrUpdateMs: 900,
+    intensityScale: 1.0,
+  }),
+  high: Object.freeze({
+    captureResolution: 40,
+    desktopUpdateMs: 180,
+    xrUpdateMs: 560,
+    intensityScale: 1.08,
+  }),
+});
+const GI_QUALITY_FALLBACK = 'medium';
+const giState = {
+  mode: 'off', // off | probe | fallback
+  supported: !!(THREE?.LightProbe && THREE?.LightProbeGenerator && THREE?.CubeCamera && THREE?.WebGLCubeRenderTarget),
+  dirty: true,
+  updating: false,
+  lastUpdateMs: 0,
+  qualityKey: GI_QUALITY_FALLBACK,
+  captureResolution: 0,
+  probe: null,
+  cubeCamera: null,
+  cubeRenderTarget: null,
+};
+const giProbeFocus = new THREE.Vector3();
+const giHiddenDuringCapture = [];
 const solarSunMarker = new THREE.Sprite(
   new THREE.SpriteMaterial({
     color: 0xffffff,
@@ -63,6 +112,30 @@ solarSunMarker.visible = false;
 solarSunMarker.renderOrder = 2500;
 solarSunMarker.frustumCulled = false;
 scene.add(solarSunMarker);
+const solarPathPreviewLine = new THREE.Line(
+  new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.72,
+    depthTest: false,
+    depthWrite: false,
+    fog: false,
+  })
+);
+solarPathPreviewLine.visible = false;
+solarPathPreviewLine.renderOrder = 2490;
+solarPathPreviewLine.frustumCulled = false;
+scene.add(solarPathPreviewLine);
+const solarPathPreviewState = {
+  requestedVisible: false,
+  hasGeometry: false,
+  dirty: true,
+  lastDate: '',
+  sampleCount: 96,
+  sampleDistance: 56,
+};
+const solarPathDirTmp = new THREE.Vector3();
 
 // Grid floor
 const grid = new THREE.GridHelper(12, 24, GRID_ENV_MAJOR_HEX, GRID_ENV_MINOR_HEX);
@@ -249,11 +322,14 @@ const LEGACY_STORAGE_KEYS = Object.freeze({
   conceptVolumes: 'climbingWall.conceptVolumes.v1',
   office: 'climbingWall.office.v1',
   sauna: 'climbingWall.sauna.v1',
+  outdoorKitchen: 'climbingWall.outdoorKitchen.v1',
   wallTextures: 'climbingWall.wallTextures.v1',
   climbingHolds: 'climbingWall.climbingHolds.v1',
   crashMatTexture: 'climbingWall.crashMatTexture.v1',
   textures: 'climbingWall.textures.v1',
   environment: 'climbingWall.environment.v1',
+  globalIllumination: 'climbingWall.globalIllumination.v1',
+  globalIlluminationQuality: 'climbingWall.globalIlluminationQuality.v1',
   solarState: 'climbingWall.solarState.v1',
   geometryState: 'climbingWall.geometryState.v1',
   geometryDefaults: 'climbingWall.geometryDefaultState.v1',
@@ -271,11 +347,14 @@ const CAMPUS_BOARD_STORAGE_KEY = STORAGE_KEYS.campusBoard;
 const CONCEPT_VOLUMES_STORAGE_KEY = STORAGE_KEYS.conceptVolumes;
 const OFFICE_STORAGE_KEY = STORAGE_KEYS.office || LEGACY_STORAGE_KEYS.office;
 const SAUNA_STORAGE_KEY = STORAGE_KEYS.sauna || LEGACY_STORAGE_KEYS.sauna;
+const OUTDOOR_KITCHEN_STORAGE_KEY = STORAGE_KEYS.outdoorKitchen || LEGACY_STORAGE_KEYS.outdoorKitchen;
 const WALL_TEXTURES_STORAGE_KEY = STORAGE_KEYS.wallTextures;
 const CLIMBING_HOLDS_STORAGE_KEY = STORAGE_KEYS.climbingHolds;
 const CRASH_MAT_TEXTURE_STORAGE_KEY = STORAGE_KEYS.crashMatTexture;
 const TEXTURES_STORAGE_KEY = STORAGE_KEYS.textures;
 const ENVIRONMENT_STORAGE_KEY = STORAGE_KEYS.environment;
+const GLOBAL_ILLUMINATION_STORAGE_KEY = STORAGE_KEYS.globalIllumination || LEGACY_STORAGE_KEYS.globalIllumination;
+const GLOBAL_ILLUMINATION_QUALITY_STORAGE_KEY = STORAGE_KEYS.globalIlluminationQuality || LEGACY_STORAGE_KEYS.globalIlluminationQuality;
 const SOLAR_STATE_STORAGE_KEY = STORAGE_KEYS.solarState || LEGACY_STORAGE_KEYS.solarState;
 const WALL_GEOMETRY_STATE_STORAGE_KEY = STORAGE_KEYS.geometryState;
 const WALL_GEOMETRY_DEFAULT_STATE_STORAGE_KEY = STORAGE_KEYS.geometryDefaults;
@@ -425,6 +504,26 @@ function persistStoredBool(key, value) {
   }
 }
 
+function readStoredString(key, fallback='') {
+  if (typeof localStorage === 'undefined') return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return (typeof raw === 'string' && raw.length > 0) ? raw : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function persistStoredString(key, value) {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(key, String(value));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function clampWallGeometryStateValue(key, value) {
   const limits = WALL_GEOMETRY_STATE_LIMITS[key];
   if (!limits) return value;
@@ -538,6 +637,7 @@ function applyWallGeometryState(nextState, {rebuildScene=true, persistState=true
 
   if (typeof rebuildFloorSlab === 'function') rebuildFloorSlab();
   if (typeof updateEnvironmentAnchors === 'function') updateEnvironmentAnchors();
+  markSolarPathPreviewDirty();
   applySolarLightingState({persist:false, emit:false});
   if (rebuildScene) requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('geometry:update');
@@ -681,6 +781,24 @@ const solarFillColorDusk = new THREE.Color(0xffb88d);
 const solarFillColorNight = new THREE.Color(0x2c3b5a);
 const defaultSunPos = sun.position.clone();
 const defaultFillPos = fill.position.clone();
+const solarFallbackDir = new THREE.Vector3(0.42, 0.72, 0.55).normalize();
+let solarDaylightFactor = 1;
+const GI_QUALITY_LABELS = Object.freeze({
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+});
+
+function normalizeGlobalIlluminationQuality(raw) {
+  const key = (typeof raw === 'string') ? raw.trim().toLowerCase() : '';
+  if (Object.prototype.hasOwnProperty.call(GI_QUALITY_PRESETS, key)) return key;
+  return GI_QUALITY_FALLBACK;
+}
+
+function getGlobalIlluminationPreset() {
+  const key = normalizeGlobalIlluminationQuality(globalIlluminationQuality);
+  return GI_QUALITY_PRESETS[key] || GI_QUALITY_PRESETS[GI_QUALITY_FALLBACK];
+}
 
 function toSolarJulian(dateUtc) {
   return (dateUtc.valueOf() / SOLAR_DAY_MS) - 0.5 + SOLAR_J1970;
@@ -733,6 +851,18 @@ function getSolarPosition(dateUtc, latDeg, lonDeg) {
   return { altitude, azimuthSouth };
 }
 
+function getSolarDirectionForPosition(pos, out=solarPathDirTmp) {
+  const azNorth = pos.azimuthSouth + Math.PI;
+  const cosAlt = Math.max(0.00001, Math.cos(pos.altitude));
+  const east = Math.sin(azNorth) * cosAlt;
+  const north = Math.cos(azNorth) * cosAlt;
+  const up = Math.sin(pos.altitude);
+  const yaw = THREE.MathUtils.degToRad(SOLAR_SITE.northYawDeg);
+  const dirX = (east * Math.cos(yaw)) + (north * Math.sin(yaw));
+  const dirZ = (north * Math.cos(yaw)) - (east * Math.sin(yaw));
+  return out.set(dirX, up, dirZ).normalize();
+}
+
 function getSolarFocusPoint() {
   solarVecFocus.set(
     WALL_ORIGIN_X + (W * 0.5),
@@ -740,6 +870,266 @@ function getSolarFocusPoint() {
     WALL_ORIGIN_Z + (D * 0.5)
   );
   return solarVecFocus;
+}
+
+function getSolarMonth(state=solarState) {
+  const normalized = normalizeSolarState(state, {
+    ...BUILTIN_SOLAR_STATE,
+    date: getSiteTodayIsoDate(),
+  });
+  const month = Number(String(normalized.date).split('-')[1]);
+  if (!Number.isFinite(month)) return 1;
+  return THREE.MathUtils.clamp(Math.round(month), 1, 12);
+}
+
+function getDaysInMonth(year, month) {
+  const y = Number(year);
+  const m = Number(month);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return 31;
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+function setSolarMonth(month, {persist=true, emit=true}={}) {
+  const normalized = normalizeSolarState(solarState, {
+    ...BUILTIN_SOLAR_STATE,
+    date: getSiteTodayIsoDate(),
+  });
+  const [yRaw, , dRaw] = String(normalized.date).split('-');
+  const year = Number(yRaw);
+  const targetMonth = THREE.MathUtils.clamp(Math.round(Number(month) || 1), 1, 12);
+  const daySeed = Number(dRaw);
+  const maxDay = getDaysInMonth(year, targetMonth);
+  const day = THREE.MathUtils.clamp(Math.round(Number.isFinite(daySeed) ? daySeed : 1), 1, maxDay);
+  const nextDate = formatIsoDate(year, targetMonth, day);
+  return setSolarState({...solarState, date: nextDate}, {persist, emit});
+}
+
+function markSolarPathPreviewDirty() {
+  solarPathPreviewState.dirty = true;
+}
+
+function updateSolarPathPreviewVisibility() {
+  solarPathPreviewLine.visible = !!(
+    environmentEnabled &&
+    solarPathPreviewState.requestedVisible &&
+    solarPathPreviewState.hasGeometry
+  );
+}
+
+function rebuildSolarPathPreviewGeometry() {
+  const sampleCount = Math.max(16, Math.round(Number(solarPathPreviewState.sampleCount) || 96));
+  const sampleDistance = Math.max(8, Number(solarPathPreviewState.sampleDistance) || 56);
+  const date = normalizeSolarDate(solarState?.date, getSiteTodayIsoDate());
+  const focus = getSolarFocusPoint();
+  const points = [];
+  const minVisibleAltitudeRad = THREE.MathUtils.degToRad(-6);
+
+  for (let i = 0; i <= sampleCount; i++) {
+    const minutes = Math.round((i / sampleCount) * 1439);
+    const whenUtc = getSolarDateUtcFromState({date, minutes});
+    const pos = getSolarPosition(whenUtc, SOLAR_SITE.latitudeDeg, SOLAR_SITE.longitudeDeg);
+    if (!pos || pos.altitude < minVisibleAltitudeRad) continue;
+    const dir = getSolarDirectionForPosition(pos, solarPathDirTmp);
+    points.push(new THREE.Vector3(
+      focus.x + (dir.x * sampleDistance),
+      focus.y + (dir.y * sampleDistance),
+      focus.z + (dir.z * sampleDistance)
+    ));
+  }
+
+  if (solarPathPreviewLine.geometry && typeof solarPathPreviewLine.geometry.dispose === 'function') {
+    solarPathPreviewLine.geometry.dispose();
+  }
+  solarPathPreviewLine.geometry = new THREE.BufferGeometry();
+  if (points.length >= 2) {
+    solarPathPreviewLine.geometry.setFromPoints(points);
+    solarPathPreviewState.hasGeometry = true;
+  } else {
+    solarPathPreviewState.hasGeometry = false;
+  }
+  solarPathPreviewState.lastDate = date;
+  solarPathPreviewState.dirty = false;
+  updateSolarPathPreviewVisibility();
+}
+
+function setSolarPathPreviewVisible(visible) {
+  solarPathPreviewState.requestedVisible = !!visible;
+  if (solarPathPreviewState.requestedVisible && (solarPathPreviewState.dirty || solarPathPreviewState.lastDate !== normalizeSolarDate(solarState?.date, getSiteTodayIsoDate()))) {
+    rebuildSolarPathPreviewGeometry();
+  }
+  updateSolarPathPreviewVisibility();
+}
+
+function setGiFallbackIntensity(intensity, focus, dir) {
+  const v = Math.max(0, Number(intensity) || 0);
+  giLightRig.visible = v > 0.0001;
+  giHemiLight.position.copy(focus).add(new THREE.Vector3(0, 3.0, 0));
+  giWarmBounce.position.copy(focus).addScaledVector(dir, -12).add(new THREE.Vector3(5.5, 3.0, -3.8));
+  giCoolBounce.position.copy(focus).addScaledVector(dir, -9).add(new THREE.Vector3(-4.4, 2.6, 4.6));
+  giRearBounce.position.copy(focus).add(new THREE.Vector3(0.0, 2.8, 7.5));
+  giHemiLight.intensity = v * 0.48;
+  giWarmBounce.intensity = v * 0.34;
+  giCoolBounce.intensity = v * 0.24;
+  giRearBounce.intensity = v * 0.16;
+}
+
+function disposeGlobalIlluminationProbe() {
+  if (giState.probe) {
+    scene.remove(giState.probe);
+  }
+  if (giState.cubeRenderTarget && typeof giState.cubeRenderTarget.dispose === 'function') {
+    giState.cubeRenderTarget.dispose();
+  }
+  giState.probe = null;
+  giState.cubeCamera = null;
+  giState.cubeRenderTarget = null;
+  giState.captureResolution = 0;
+}
+
+function ensureGlobalIlluminationProbe() {
+  if (!giState.supported) return false;
+  const preset = getGlobalIlluminationPreset();
+  const desiredResolution = Math.max(8, Math.round(Number(preset.captureResolution) || 24));
+  if (
+    giState.cubeRenderTarget &&
+    giState.captureResolution > 0 &&
+    giState.captureResolution !== desiredResolution
+  ) {
+    disposeGlobalIlluminationProbe();
+  }
+  if (giState.probe && giState.cubeCamera && giState.cubeRenderTarget) return true;
+  try {
+    const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(desiredResolution, {
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      encoding: renderer.outputEncoding || THREE.LinearEncoding,
+      generateMipmaps: false,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    const cubeCamera = new THREE.CubeCamera(0.1, 70, cubeRenderTarget);
+    const probe = new THREE.LightProbe();
+    probe.intensity = 0;
+    scene.add(probe);
+    giState.probe = probe;
+    giState.cubeCamera = cubeCamera;
+    giState.cubeRenderTarget = cubeRenderTarget;
+    giState.captureResolution = desiredResolution;
+    giState.qualityKey = normalizeGlobalIlluminationQuality(globalIlluminationQuality);
+    giState.dirty = true;
+    return true;
+  } catch (err) {
+    console.warn('[gi] failed to initialize probe GI, using fallback rig', err);
+    giState.supported = false;
+    disposeGlobalIlluminationProbe();
+    return false;
+  }
+}
+
+function hideForGiCapture(obj) {
+  if (!obj || !obj.visible) return;
+  giHiddenDuringCapture.push(obj);
+  obj.visible = false;
+}
+
+function restoreAfterGiCapture() {
+  while (giHiddenDuringCapture.length) {
+    const obj = giHiddenDuringCapture.pop();
+    if (!obj) continue;
+    obj.visible = true;
+  }
+}
+
+function markGlobalIlluminationDirty() {
+  giState.dirty = true;
+}
+
+function applyGlobalIlluminationState() {
+  const on = !!globalIlluminationEnabled;
+  const focus = getSolarFocusPoint();
+  const day = THREE.MathUtils.clamp(Number(solarDaylightFactor) || 0, 0, 1);
+  const dir = (solarVecDir.lengthSq() > 1e-8) ? solarVecDir : solarFallbackDir;
+  const preset = getGlobalIlluminationPreset();
+  const intensityScale = Math.max(0.2, Number(preset.intensityScale) || 1);
+  giState.qualityKey = normalizeGlobalIlluminationQuality(globalIlluminationQuality);
+
+  if (!on) {
+    giState.mode = 'off';
+    if (giState.probe) giState.probe.intensity = 0;
+    setGiFallbackIntensity(0, focus, dir);
+    return;
+  }
+
+  if (ensureGlobalIlluminationProbe()) {
+    giState.mode = 'probe';
+    if (giState.probe) giState.probe.intensity = (0.18 + (0.72 * day)) * intensityScale;
+    setGiFallbackIntensity(0, focus, dir);
+    markGlobalIlluminationDirty();
+    return;
+  }
+
+  giState.mode = 'fallback';
+  if (giState.probe) giState.probe.intensity = 0;
+  setGiFallbackIntensity((0.18 + (0.58 * day)) * intensityScale, focus, dir);
+}
+
+function updateGlobalIlluminationFrame(nowMs) {
+  if (!globalIlluminationEnabled) return;
+  if (giState.mode !== 'probe') return;
+  if (!giState.probe || !giState.cubeCamera || !giState.cubeRenderTarget) return;
+  if (!THREE.LightProbeGenerator || !THREE.LightProbeGenerator.fromCubeRenderTarget) return;
+
+  const now = Number.isFinite(nowMs) ? nowMs : (
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now()
+  );
+  const preset = getGlobalIlluminationPreset();
+  const minInterval = (renderer.xr && renderer.xr.isPresenting)
+    ? Math.max(40, Number(preset.xrUpdateMs) || 900)
+    : Math.max(20, Number(preset.desktopUpdateMs) || 360);
+  if (!giState.dirty && (now - giState.lastUpdateMs) < minInterval) return;
+  if (giState.updating) return;
+  giState.updating = true;
+  giState.lastUpdateMs = now;
+
+  try {
+    const focus = getSolarFocusPoint();
+    giProbeFocus.copy(focus);
+    giProbeFocus.y = Math.min(H_adj + 0.8, Math.max(1.1, focus.y + (H_fixed * 0.12)));
+    giState.cubeCamera.position.copy(giProbeFocus);
+
+    hideForGiCapture(solarSunMarker);
+    hideForGiCapture(solarPathPreviewLine);
+    hideForGiCapture(dimGroup);
+    hideForGiCapture(labelGroup);
+    hideForGiCapture(hoverDimGroup);
+    hideForGiCapture(giLightRig);
+
+    giState.cubeCamera.update(renderer, scene);
+    const probeSample = THREE.LightProbeGenerator.fromCubeRenderTarget(renderer, giState.cubeRenderTarget);
+    if (probeSample && probeSample.sh && giState.probe?.sh) {
+      giState.probe.sh.copy(probeSample.sh);
+    }
+    giState.dirty = false;
+  } catch (err) {
+    console.warn('[gi] probe update failed, falling back to light rig', err);
+    giState.mode = 'fallback';
+    giState.supported = false;
+    const dir = (solarVecDir.lengthSq() > 1e-8) ? solarVecDir : solarFallbackDir;
+    setGiFallbackIntensity(
+      (0.18 + (0.58 * THREE.MathUtils.clamp(Number(solarDaylightFactor) || 0, 0, 1))) *
+        (Math.max(0.2, Number(preset.intensityScale) || 1)),
+      getSolarFocusPoint(),
+      dir
+    );
+    if (giState.probe) giState.probe.intensity = 0;
+  } finally {
+    restoreAfterGiCapture();
+    giState.updating = false;
+  }
 }
 
 function saveSolarState(nextSolarState, {emit=true}={}) {
@@ -766,21 +1156,17 @@ function applySolarLightingState({persist=false, emit=false}={}) {
     sunTarget.position.copy(focus);
     sun.castShadow = true;
     solarSunMarker.visible = false;
+    solarDaylightFactor = 1;
+    solarVecDir.copy(solarFallbackDir);
+    applyGlobalIlluminationState();
+    updateSolarPathPreviewVisibility();
     return;
   }
 
   const whenUtc = getSolarDateUtcFromState(solarState);
   const pos = getSolarPosition(whenUtc, SOLAR_SITE.latitudeDeg, SOLAR_SITE.longitudeDeg);
   const altDeg = THREE.MathUtils.radToDeg(pos.altitude);
-  const azNorth = pos.azimuthSouth + Math.PI;
-  const cosAlt = Math.max(0.00001, Math.cos(pos.altitude));
-  const east = Math.sin(azNorth) * cosAlt;
-  const north = Math.cos(azNorth) * cosAlt;
-  const up = Math.sin(pos.altitude);
-  const yaw = THREE.MathUtils.degToRad(SOLAR_SITE.northYawDeg);
-  const dirX = (east * Math.cos(yaw)) + (north * Math.sin(yaw));
-  const dirZ = (north * Math.cos(yaw)) - (east * Math.sin(yaw));
-  solarVecDir.set(dirX, up, dirZ).normalize();
+  getSolarDirectionForPosition(pos, solarVecDir);
 
   const daylight = THREE.MathUtils.clamp((altDeg + 6) / 18, 0, 1);
   const twilight = THREE.MathUtils.clamp(1 - Math.abs((altDeg - 2) / 14), 0, 1) * (1 - (daylight * 0.65));
@@ -798,6 +1184,7 @@ function applySolarLightingState({persist=false, emit=false}={}) {
   fill.position.copy(focus).addScaledVector(solarVecDir, -22).add(new THREE.Vector3(0, 4.5, 0));
 
   ambientLight.intensity = 0.03 + (0.32 * daylight) + (0.03 * (1 - night));
+  solarDaylightFactor = daylight;
 
   const sunMarkerOpacity = THREE.MathUtils.clamp((altDeg + 6) / 18, 0, 1);
   solarSunMarker.position.copy(focus).addScaledVector(solarVecDir, 56);
@@ -827,14 +1214,25 @@ function applySolarLightingState({persist=false, emit=false}={}) {
     }
   }
 
+  applyGlobalIlluminationState();
+  const normalizedDate = normalizeSolarDate(solarState?.date, getSiteTodayIsoDate());
+  if (solarPathPreviewState.dirty || solarPathPreviewState.lastDate !== normalizedDate) {
+    rebuildSolarPathPreviewGeometry();
+  } else {
+    updateSolarPathPreviewVisibility();
+  }
+
   if (persist) saveSolarState(solarState, {emit});
 }
 
 function setSolarState(nextSolarState, {persist=false, emit=true}={}) {
+  const prevDate = normalizeSolarDate(solarState?.date, getSiteTodayIsoDate());
   solarState = normalizeSolarState(nextSolarState, {
     ...BUILTIN_SOLAR_STATE,
     date: getSiteTodayIsoDate(),
   });
+  const nextDate = normalizeSolarDate(solarState?.date, getSiteTodayIsoDate());
+  if (nextDate !== prevDate) markSolarPathPreviewDirty();
   applySolarLightingState({persist, emit:false});
   if (persist) saveSolarState(solarState, {emit});
   else if (emit) syncAppStateFromCore('solar:update');
@@ -919,6 +1317,7 @@ let campusBoardEnabled = readStoredBool(CAMPUS_BOARD_STORAGE_KEY, true);
 let conceptVolumesEnabled = readStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, true);
 let officeEnabled = readStoredBool(OFFICE_STORAGE_KEY, true);
 let saunaEnabled = readStoredBool(SAUNA_STORAGE_KEY, true);
+let outdoorKitchenEnabled = readStoredBool(OUTDOOR_KITCHEN_STORAGE_KEY, true);
 let texturedWallsEnabled = readStoredBool(WALL_TEXTURES_STORAGE_KEY, true);
 let climbingHoldsEnabled = readStoredBool(CLIMBING_HOLDS_STORAGE_KEY, true);
 let crashMatTextureEnabled = readStoredBool(CRASH_MAT_TEXTURE_STORAGE_KEY, true);
@@ -938,6 +1337,10 @@ let texturesEnabled = (() => {
 })();
 texturedWallsEnabled = texturesEnabled;
 crashMatTextureEnabled = texturesEnabled;
+let globalIlluminationEnabled = readStoredBool(GLOBAL_ILLUMINATION_STORAGE_KEY, false);
+let globalIlluminationQuality = normalizeGlobalIlluminationQuality(
+  readStoredString(GLOBAL_ILLUMINATION_QUALITY_STORAGE_KEY, GI_QUALITY_FALLBACK)
+);
 
 function setGridColors(centerHex, gridHex) {
   if (typeof grid?.setColors === 'function') {
@@ -1015,6 +1418,7 @@ function setCrashMatsEnabled(enabled) {
   if (crashMatsGroup) crashMatsGroup.visible = crashMatsEnabled;
   updateScalePersonFloorOffset();
   persistStoredBool(CRASH_MATS_STORAGE_KEY, crashMatsEnabled);
+  markGlobalIlluminationDirty();
   syncAppStateFromCore('toggle:crashMats');
 }
 
@@ -1024,6 +1428,7 @@ function setCrashMatTextureEnabled(enabled) {
   texturesEnabled = texturedWallsEnabled && crashMatTextureEnabled;
   persistStoredBool(TEXTURES_STORAGE_KEY, texturesEnabled);
   if (typeof rebuildCrashMatsGeometry === 'function') rebuildCrashMatsGeometry();
+  markGlobalIlluminationDirty();
   syncAppStateFromCore('toggle:crashMatTexture');
 }
 
@@ -1076,6 +1481,13 @@ function setSaunaEnabled(enabled) {
   syncAppStateFromCore('toggle:sauna');
 }
 
+function setOutdoorKitchenEnabled(enabled) {
+  outdoorKitchenEnabled = !!enabled;
+  persistStoredBool(OUTDOOR_KITCHEN_STORAGE_KEY, outdoorKitchenEnabled);
+  requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
+  syncAppStateFromCore('toggle:outdoorKitchen');
+}
+
 function setTexturedWallsEnabled(enabled) {
   texturedWallsEnabled = !!enabled;
   persistStoredBool(WALL_TEXTURES_STORAGE_KEY, texturedWallsEnabled);
@@ -1083,6 +1495,7 @@ function setTexturedWallsEnabled(enabled) {
   persistStoredBool(TEXTURES_STORAGE_KEY, texturesEnabled);
   updateAllWallMaterials();
   applyConceptVolumeMaterialStyle();
+  markGlobalIlluminationDirty();
   syncAppStateFromCore('toggle:texturedWalls');
 }
 
@@ -1096,6 +1509,7 @@ function setTexturesEnabled(enabled) {
   updateAllWallMaterials();
   applyConceptVolumeMaterialStyle();
   if (typeof rebuildCrashMatsGeometry === 'function') rebuildCrashMatsGeometry();
+  markGlobalIlluminationDirty();
   syncAppStateFromCore('toggle:textures');
 }
 
@@ -1110,15 +1524,37 @@ function setEnvironmentEnabled(enabled) {
   environmentEnabled = !!enabled;
   persistStoredBool(ENVIRONMENT_STORAGE_KEY, environmentEnabled);
   applyEnvironmentVisualState();
+  markGlobalIlluminationDirty();
   syncAppStateFromCore('toggle:environment');
 }
 
+function setGlobalIlluminationEnabled(enabled, {emit=true}={}) {
+  globalIlluminationEnabled = !!enabled;
+  persistStoredBool(GLOBAL_ILLUMINATION_STORAGE_KEY, globalIlluminationEnabled);
+  if (globalIlluminationEnabled) markGlobalIlluminationDirty();
+  applyGlobalIlluminationState();
+  if (emit) syncAppStateFromCore('toggle:globalIllumination');
+}
+
+function setGlobalIlluminationQuality(quality, {emit=true}={}) {
+  const normalized = normalizeGlobalIlluminationQuality(quality);
+  globalIlluminationQuality = normalized;
+  persistStoredString(GLOBAL_ILLUMINATION_QUALITY_STORAGE_KEY, globalIlluminationQuality);
+  disposeGlobalIlluminationProbe();
+  markGlobalIlluminationDirty();
+  applyGlobalIlluminationState();
+  if (emit) syncAppStateFromCore('toggle:globalIlluminationQuality');
+}
+
 // ── Materials ──
-const claddingMat = new THREE.MeshStandardMaterial({
+const claddingMat = new THREE.MeshPhysicalMaterial({
   color: 0x4a4d52,
   side: THREE.DoubleSide,
-  roughness: 0.78,
-  metalness: 0.30
+  roughness: 0.80,
+  metalness: 0.08,
+  clearcoat: 0.10,
+  clearcoatRoughness: 0.74,
+  reflectivity: 0.35,
 });
 function makeMonumentAxonTexture() {
   const HARDIE_GROOVE_SPACING_M = 0.12;
@@ -1664,67 +2100,176 @@ function makeRoofTexturePack() {
   colorCanvas.width = w;
   colorCanvas.height = h;
   const colorCtx = colorCanvas.getContext('2d');
-  const rand = seededRandom(hashString('roof-corrugated-color'));
-
-  colorCtx.fillStyle = '#3f4349';
-  colorCtx.fillRect(0, 0, w, h);
-
-  // Corrugation shading: variation in X gives ribs that run along roof depth.
-  for (let x = 0; x < w; x++) {
-    const t = (x / w) * Math.PI * 2 * 40;
-    const wave = Math.sin(t);
-    const highlight = Math.max(0, wave) * 22;
-    const shadow = Math.max(0, -wave) * 18;
-    const base = 72 + highlight - shadow + (rand() - 0.5) * 3;
-    const c = Math.max(40, Math.min(140, base | 0));
-    colorCtx.fillStyle = `rgb(${c},${c + 2},${c + 5})`;
-    colorCtx.fillRect(x, 0, 1, h);
-  }
-
-  // Sheet seams.
-  for (let sx = 96; sx < w; sx += 192) {
-    colorCtx.fillStyle = 'rgba(22,24,28,0.45)';
-    colorCtx.fillRect(sx, 0, 2, h);
-    colorCtx.fillStyle = 'rgba(180,186,194,0.10)';
-    colorCtx.fillRect(sx + 2, 0, 1, h);
-  }
-
-  // Light weathering.
-  for (let i = 0; i < 2400; i++) {
-    const x = (rand() * w) | 0;
-    const y = (rand() * h) | 0;
-    const tone = 86 + (rand() * 26) | 0;
-    const a = 0.04 + rand() * 0.08;
-    colorCtx.fillStyle = `rgba(${tone},${tone + 3},${tone + 6},${a.toFixed(3)})`;
-    colorCtx.fillRect(x, y, 1, 1);
-  }
-
+  const normalCanvas = document.createElement('canvas');
+  normalCanvas.width = w;
+  normalCanvas.height = h;
+  const normalCtx = normalCanvas.getContext('2d');
+  const roughCanvas = document.createElement('canvas');
+  roughCanvas.width = w;
+  roughCanvas.height = h;
+  const roughCtx = roughCanvas.getContext('2d');
+  const metalCanvas = document.createElement('canvas');
+  metalCanvas.width = w;
+  metalCanvas.height = h;
+  const metalCtx = metalCanvas.getContext('2d');
   const bumpCanvas = document.createElement('canvas');
   bumpCanvas.width = w;
   bumpCanvas.height = h;
   const bumpCtx = bumpCanvas.getContext('2d');
-  const bumpImage = bumpCtx.createImageData(w, h);
-  const bumpData = bumpImage.data;
-  const bumpRand = seededRandom(hashString('roof-corrugated-bump'));
+  if (!colorCtx || !normalCtx || !roughCtx || !metalCtx || !bumpCtx) {
+    return {
+      map: null,
+      bumpMap: null,
+      normalMap: null,
+      roughnessMap: null,
+      metalnessMap: null,
+    };
+  }
+
+  const tau = Math.PI * 2;
+  const ribsPerTile = 46;
+  const ribPhase = 0.18;
+  const seamPeriodPx = 192;
+  const seamWidthPx = 3.5;
+  const colorRand = seededRandom(hashString('roof-corrugated-color-v2'));
+  const weatherRand = seededRandom(hashString('roof-corrugated-weather-v2'));
+
+  const heightField = new Float32Array(w * h);
+  const profileAt = (xNorm, yNorm) => {
+    const t = (xNorm * tau * ribsPerTile) + ribPhase;
+    const base = Math.sin(t);
+    const harmonic = Math.sin((t * 3.0) + 0.32) * 0.16;
+    const micro = Math.sin((t * 9.0) - 0.42) * 0.04;
+    const flattened = Math.sign(base) * Math.pow(Math.abs(base), 0.82);
+    const oilCan = Math.sin((yNorm * tau * 2.2) + (xNorm * tau * 0.35)) * 0.020;
+    const c = THREE.MathUtils.clamp((flattened * 0.84) + harmonic + micro + oilCan, -1, 1);
+    return 0.5 + (c * 0.44);
+  };
+  const seamMaskAt = x => {
+    const m = x % seamPeriodPx;
+    const d = Math.min(Math.abs(m), Math.abs(m - seamPeriodPx));
+    if (d >= seamWidthPx) return 0;
+    return 1 - (d / seamWidthPx);
+  };
+
   for (let y = 0; y < h; y++) {
+    const yNorm = y / h;
     for (let x = 0; x < w; x++) {
-      const idx = (y * w + x) * 4;
-      const t = (x / w) * Math.PI * 2 * 40;
-      const corr = Math.sin(t) * 32;
-      const micro = Math.sin((x / w) * Math.PI * 2 * 160) * 5;
-      const grain = (bumpRand() - 0.5) * 5;
-      const v = 128 + corr + micro + grain;
-      const c = Math.max(0, Math.min(255, v | 0));
-      bumpData[idx] = c;
-      bumpData[idx + 1] = c;
-      bumpData[idx + 2] = c;
-      bumpData[idx + 3] = 255;
+      const idx = (y * w) + x;
+      const xNorm = x / w;
+      heightField[idx] = profileAt(xNorm, yNorm);
     }
   }
+
+  const colorImage = colorCtx.createImageData(w, h);
+  const normalImage = normalCtx.createImageData(w, h);
+  const roughImage = roughCtx.createImageData(w, h);
+  const metalImage = metalCtx.createImageData(w, h);
+  const bumpImage = bumpCtx.createImageData(w, h);
+  const colorData = colorImage.data;
+  const normalData = normalImage.data;
+  const roughData = roughImage.data;
+  const metalData = metalImage.data;
+  const bumpData = bumpImage.data;
+
+  for (let y = 0; y < h; y++) {
+    const yNorm = y / h;
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w) + x;
+      const px = idx * 4;
+      const hC = heightField[idx];
+      const hL = heightField[(y * w) + ((x - 1 + w) % w)];
+      const hR = heightField[(y * w) + ((x + 1) % w)];
+      const hD = heightField[((y - 1 + h) % h) * w + x];
+      const hU = heightField[((y + 1) % h) * w + x];
+      const seamMask = seamMaskAt(x);
+      const ridge = (hC - 0.5) * 2.0;
+      const valleyMask = THREE.MathUtils.clamp(-ridge, 0, 1);
+
+      const streak = Math.sin((yNorm * tau * 1.5) + (x / w) * tau * 0.16) * 1.6;
+      const grain = (colorRand() - 0.5) * 2.6;
+      const ridgeShade = ridge * 13;
+      const seamShadow = seamMask * 6;
+      const seamHighlight = seamMask * 3;
+
+      let r = 94 + ridgeShade + streak + grain - seamShadow;
+      let g = 98 + ridgeShade + (streak * 1.03) + grain - seamShadow + seamHighlight;
+      let b = 104 + ridgeShade + (streak * 1.08) + grain - (seamShadow * 0.90) + seamHighlight;
+
+      if (weatherRand() > 0.9975) {
+        const fleck = 10 + (weatherRand() * 16);
+        r += fleck;
+        g += fleck;
+        b += fleck;
+      }
+
+      colorData[px] = THREE.MathUtils.clamp(r | 0, 62, 176);
+      colorData[px + 1] = THREE.MathUtils.clamp(g | 0, 66, 180);
+      colorData[px + 2] = THREE.MathUtils.clamp(b | 0, 72, 188);
+      colorData[px + 3] = 255;
+
+      const dx = (hR - hL) * 2.2;
+      const dy = (hU - hD) * 0.85;
+      let nx = -dx;
+      let ny = -dy;
+      let nz = 1.0;
+      const nLen = Math.sqrt((nx * nx) + (ny * ny) + (nz * nz)) || 1;
+      nx /= nLen;
+      ny /= nLen;
+      nz /= nLen;
+      normalData[px] = ((nx * 0.5 + 0.5) * 255) | 0;
+      normalData[px + 1] = ((ny * 0.5 + 0.5) * 255) | 0;
+      normalData[px + 2] = ((nz * 0.5 + 0.5) * 255) | 0;
+      normalData[px + 3] = 255;
+
+      const roughNoise = (weatherRand() - 0.5) * 0.06;
+      const rough = THREE.MathUtils.clamp(
+        0.70 + (valleyMask * 0.16) + (seamMask * 0.08) + roughNoise,
+        0.52,
+        0.95
+      );
+      const roughByte = (rough * 255) | 0;
+      roughData[px] = roughByte;
+      roughData[px + 1] = roughByte;
+      roughData[px + 2] = roughByte;
+      roughData[px + 3] = 255;
+
+      const metalNoise = (weatherRand() - 0.5) * 0.04;
+      const metal = THREE.MathUtils.clamp(
+        0.16 - (valleyMask * 0.05) - (seamMask * 0.03) + metalNoise,
+        0.04,
+        0.32
+      );
+      const metalByte = (metal * 255) | 0;
+      metalData[px] = metalByte;
+      metalData[px + 1] = metalByte;
+      metalData[px + 2] = metalByte;
+      metalData[px + 3] = 255;
+
+      const bump = THREE.MathUtils.clamp((hC * 255) | 0, 0, 255);
+      bumpData[px] = bump;
+      bumpData[px + 1] = bump;
+      bumpData[px + 2] = bump;
+      bumpData[px + 3] = 255;
+    }
+  }
+
+  colorCtx.putImageData(colorImage, 0, 0);
+  normalCtx.putImageData(normalImage, 0, 0);
+  roughCtx.putImageData(roughImage, 0, 0);
+  metalCtx.putImageData(metalImage, 0, 0);
   bumpCtx.putImageData(bumpImage, 0, 0);
+
+  const repeatU = 1.85;
+  const repeatV = 2.10;
+  const map = makeCanvasTexture(colorCanvas, repeatU, repeatV);
+  if (map && typeof THREE.sRGBEncoding !== 'undefined') map.encoding = THREE.sRGBEncoding;
   return {
-    map: makeCanvasTexture(colorCanvas, 1.6, 1.6),
-    bumpMap: makeCanvasTexture(bumpCanvas, 1.6, 1.6),
+    map,
+    bumpMap: makeCanvasTexture(bumpCanvas, repeatU, repeatV),
+    normalMap: makeCanvasTexture(normalCanvas, repeatU, repeatV),
+    roughnessMap: makeCanvasTexture(roughCanvas, repeatU, repeatV),
+    metalnessMap: makeCanvasTexture(metalCanvas, repeatU, repeatV),
   };
 }
 
@@ -1963,9 +2508,20 @@ function applyRoofMaterialStyle() {
   if (!claddingMat) return;
   const texturePack = getRoofTexturePack();
   claddingMat.color.setHex(0xffffff);
-  claddingMat.map = texturePack.map;
-  claddingMat.bumpMap = texturePack.bumpMap;
-  claddingMat.bumpScale = 0.030;
+  claddingMat.map = texturePack.map || null;
+  claddingMat.normalMap = texturePack.normalMap || null;
+  if (claddingMat.normalMap) {
+    if (!claddingMat.normalScale) claddingMat.normalScale = new THREE.Vector2(0.62, 0.22);
+    else claddingMat.normalScale.set(0.62, 0.22);
+  }
+  claddingMat.roughnessMap = texturePack.roughnessMap || null;
+  claddingMat.metalnessMap = texturePack.metalnessMap || null;
+  claddingMat.bumpMap = texturePack.bumpMap || null;
+  claddingMat.bumpScale = claddingMat.normalMap ? 0.004 : 0.016;
+  claddingMat.roughness = 0.82;
+  claddingMat.metalness = 0.08;
+  if (typeof claddingMat.clearcoat === 'number') claddingMat.clearcoat = 0.10;
+  if (typeof claddingMat.clearcoatRoughness === 'number') claddingMat.clearcoatRoughness = 0.74;
   claddingMat.needsUpdate = true;
 }
 
@@ -2098,11 +2654,14 @@ function buildCoreAppStateSnapshot() {
       conceptVolumesEnabled,
       officeEnabled,
       saunaEnabled,
+      outdoorKitchenEnabled,
       texturedWallsEnabled,
       climbingHoldsEnabled,
       crashMatTextureEnabled,
       texturesEnabled,
       environmentEnabled,
+      globalIlluminationEnabled,
+      globalIlluminationQuality,
     },
     tools: {
       measurement: (
@@ -2150,9 +2709,16 @@ function applyCoreSnapshotToLegacy(nextState, options={}) {
     if (typeof t.conceptVolumesEnabled === 'boolean') setConceptVolumesEnabled(t.conceptVolumesEnabled);
     if (typeof t.officeEnabled === 'boolean') setOfficeEnabled(t.officeEnabled);
     if (typeof t.saunaEnabled === 'boolean') setSaunaEnabled(t.saunaEnabled);
+    if (typeof t.outdoorKitchenEnabled === 'boolean') setOutdoorKitchenEnabled(t.outdoorKitchenEnabled);
     if (typeof t.texturesEnabled === 'boolean') setTexturesEnabled(t.texturesEnabled);
     if (typeof t.climbingHoldsEnabled === 'boolean') setClimbingHoldsEnabled(t.climbingHoldsEnabled);
     if (typeof t.environmentEnabled === 'boolean') setEnvironmentEnabled(t.environmentEnabled);
+    if (typeof t.globalIlluminationQuality === 'string') {
+      setGlobalIlluminationQuality(t.globalIlluminationQuality, {emit:false});
+    }
+    if (typeof t.globalIlluminationEnabled === 'boolean') {
+      setGlobalIlluminationEnabled(t.globalIlluminationEnabled, {emit:false});
+    }
   }
   if (nextState.camera && typeof saveCameraState === 'function') {
     saveCameraState(nextState.camera);
@@ -2183,4 +2749,13 @@ if (typeof window !== 'undefined') {
   window.setSolarTimeMinutes = setSolarTimeMinutes;
   window.saveSolarState = () => saveSolarState(solarState, {emit:true});
   window.applySolarLightingState = applySolarLightingState;
+  window.getSolarMonth = () => getSolarMonth(solarState);
+  window.setSolarMonth = setSolarMonth;
+  window.setSolarPathPreviewVisible = setSolarPathPreviewVisible;
+  window.setGlobalIlluminationEnabled = setGlobalIlluminationEnabled;
+  window.setGlobalIlluminationQuality = setGlobalIlluminationQuality;
+  window.getGlobalIlluminationQuality = () => globalIlluminationQuality;
+  window.getGlobalIlluminationQualityLabels = () => ({...GI_QUALITY_LABELS});
+  window.updateGlobalIlluminationFrame = updateGlobalIlluminationFrame;
+  window.markGlobalIlluminationDirty = markGlobalIlluminationDirty;
 }

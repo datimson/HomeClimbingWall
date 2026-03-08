@@ -27,14 +27,15 @@ const reactivateCameraBtn = document.getElementById('reactivateCameraBtn');
 const enterVrBtn = document.getElementById('enterVrBtn');
 const solarTimeSliderEl = document.getElementById('solarTimeSlider');
 const solarTimeLabelEl = document.getElementById('solarTimeLabel');
+const solarMonthSliderEl = document.getElementById('solarMonthSlider');
+const solarMonthLabelEl = document.getElementById('solarMonthLabel');
 const timeOfDayReadoutEl = document.getElementById('timeOfDayReadout');
 let activeHoverMesh = null;
-let dimsAreFaded = false;
-let sceneIsFaded = false;
-let focusedMaterialEntries = [];
-let activeFocusMesh = null;
+let hoverOutline = null;
+let hoverOutlineMesh = null;
 let measurementTool = null;
 const SOLAR_MINUTES_PER_FULL_TURN = 1440 / (Math.PI * 2);
+const SOLAR_MONTH_LABELS_SHORT = Object.freeze(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']);
 const personLookAtTarget = new THREE.Vector3();
 const xrRig = new THREE.Group();
 xrRig.name = 'xrRig';
@@ -53,6 +54,8 @@ const vrTimeHud = {
   lastText: '',
 };
 let solarReadoutLastLabel = '';
+let solarMonthReadoutLastLabel = '';
+let solarPathPreviewHideTimer = null;
 const vrTimeHudPos = new THREE.Vector3();
 const vrTimeHudForward = new THREE.Vector3();
 const vrTimeHudRight = new THREE.Vector3();
@@ -319,6 +322,7 @@ const VR_MENU_SLIDERS = Object.freeze({
   fixedHeight: {label: 'Fixed H', step: 0.05, min: WALL_GEOMETRY_STATE_LIMITS.fixedHeight[0], max: WALL_GEOMETRY_STATE_LIMITS.fixedHeight[1], fmt: v => `${v.toFixed(2)}m`},
   adjHeight: {label: 'Adj H', step: 0.05, min: WALL_GEOMETRY_STATE_LIMITS.adjustableHeight[0], max: WALL_GEOMETRY_STATE_LIMITS.adjustableHeight[1], fmt: v => `${v.toFixed(2)}m`},
   userHeight: {label: 'User H', step: 0.01, min: XR_MIN_EYE_HEIGHT, max: XR_MAX_EYE_HEIGHT, fmt: v => `${v.toFixed(2)}m`},
+  solarMonth: {label: 'Month', step: 1, min: 1, max: 12, fmt: v => formatSolarMonthLabel(v)},
   aAngle: {label: 'A Angle', step: 1, min: 0, max: 60, fmt: v => `${Math.round(v)}°`},
   aWidth: {label: 'A Width', step: 0.05, min: 0.3, max: 2.5, fmt: v => `${v.toFixed(2)}m`},
   bAngle: {label: 'B Angle', step: 1, min: 0, max: 60, fmt: v => `${Math.round(v)}°`},
@@ -338,7 +342,7 @@ const VR_MENU_SLIDERS = Object.freeze({
 });
 
 const VR_MENU_TARGET_KEYS = Object.freeze({
-  S: ['roomWidth', 'roomDepth', 'fixedHeight', 'adjHeight', 'userHeight'],
+  S: ['roomWidth', 'roomDepth', 'fixedHeight', 'adjHeight', 'userHeight', 'solarMonth'],
   A: ['aAngle', 'aWidth'],
   B: ['bAngle', 'bWidth'],
   C: ['cAngle', 'cWidth'],
@@ -488,6 +492,34 @@ const vrMenuManager = (
   getXrStandingEyeHeight: () => getXrStandingEyeHeight(),
   setXrStandingEyeHeight: (value, opts) => setXrStandingEyeHeight(value, opts),
   recalcXrStandingEyeHeightFromHead: () => recalcXrStandingEyeHeightFromHead(),
+  getSolarMonth: () => {
+    if (typeof getSolarMonth === 'function') return getSolarMonth();
+    if (typeof getSolarState === 'function') return parseSolarMonthFromIsoDate(getSolarState()?.date);
+    return 1;
+  },
+  setSolarMonth: (month, opts={}) => {
+    const persist = opts?.persist !== false;
+    if (typeof setSolarMonth === 'function') {
+      setSolarMonth(month, {persist, emit:false});
+    } else if (typeof setSolarState === 'function' && typeof getSolarState === 'function') {
+      const current = getSolarState();
+      const dateRaw = String(current?.date || '');
+      const match = dateRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (match) {
+        const year = Number(match[1]);
+        const day = Number(match[3]);
+        const monthNum = THREE.MathUtils.clamp(Math.round(Number(month) || 1), 1, 12);
+        const maxDay = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+        const safeDay = THREE.MathUtils.clamp(day, 1, maxDay);
+        const mm = String(monthNum).padStart(2, '0');
+        const dd = String(safeDay).padStart(2, '0');
+        setSolarState({...current, date: `${year}-${mm}-${dd}`}, {persist, emit:false});
+      }
+    }
+    syncSolarTimeReadouts({pushSlider:true});
+    setSolarPathPreviewVisibleUi(true);
+    showSolarPathPreviewForMs(1000);
+  },
   getMeasurementSettings: () => (
     measurementTool && typeof measurementTool.getSettings === 'function'
       ? measurementTool.getSettings()
@@ -505,6 +537,8 @@ const vrMenuManager = (
   getSceneToggleStates: () => ({
     officeEnabled: !!officeEnabled,
     saunaEnabled: !!saunaEnabled,
+    outdoorKitchenEnabled: !!outdoorKitchenEnabled,
+    globalIlluminationEnabled: !!globalIlluminationEnabled,
   }),
   setSceneToggle: (key, enabled) => {
     if (key === 'officeEnabled') {
@@ -517,6 +551,19 @@ const vrMenuManager = (
       setSaunaEnabled(!!enabled);
       const saunaToggle = document.getElementById('saunaToggle');
       if (saunaToggle) saunaToggle.checked = !!saunaEnabled;
+      return true;
+    }
+    if (key === 'outdoorKitchenEnabled') {
+      setOutdoorKitchenEnabled(!!enabled);
+      const outdoorKitchenToggle = document.getElementById('outdoorKitchenToggle');
+      if (outdoorKitchenToggle) outdoorKitchenToggle.checked = !!outdoorKitchenEnabled;
+      return true;
+    }
+    if (key === 'globalIlluminationEnabled') {
+      setGlobalIlluminationEnabled(!!enabled);
+      const giToggle = document.getElementById('globalIlluminationToggle');
+      if (giToggle) giToggle.checked = !!globalIlluminationEnabled;
+      syncGlobalIlluminationQualityUi();
       return true;
     }
     return false;
@@ -630,6 +677,48 @@ function formatSolarTimeLabel(minutes) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
+function parseSolarMonthFromIsoDate(dateIso) {
+  if (typeof dateIso !== 'string') return 1;
+  const match = dateIso.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return 1;
+  const month = Number(match[2]);
+  if (!Number.isFinite(month)) return 1;
+  return THREE.MathUtils.clamp(Math.round(month), 1, 12);
+}
+
+function formatSolarMonthLabel(month) {
+  const m = THREE.MathUtils.clamp(Math.round(Number(month) || 1), 1, 12);
+  return SOLAR_MONTH_LABELS_SHORT[m - 1] || `M${m}`;
+}
+
+function setSolarMonthReadout(month, {pushSlider=false}={}) {
+  const clamped = THREE.MathUtils.clamp(Math.round(Number(month) || 1), 1, 12);
+  const label = formatSolarMonthLabel(clamped);
+  if (label !== solarMonthReadoutLastLabel) {
+    if (solarMonthLabelEl) solarMonthLabelEl.textContent = label;
+    solarMonthReadoutLastLabel = label;
+  }
+  if (solarMonthSliderEl && pushSlider) {
+    const value = String(clamped);
+    if (solarMonthSliderEl.value !== value) solarMonthSliderEl.value = value;
+  }
+}
+
+function setSolarPathPreviewVisibleUi(visible) {
+  if (typeof setSolarPathPreviewVisible === 'function') {
+    setSolarPathPreviewVisible(!!visible);
+  }
+}
+
+function showSolarPathPreviewForMs(ms=900) {
+  setSolarPathPreviewVisibleUi(true);
+  if (solarPathPreviewHideTimer) clearTimeout(solarPathPreviewHideTimer);
+  solarPathPreviewHideTimer = window.setTimeout(() => {
+    setSolarPathPreviewVisibleUi(false);
+    solarPathPreviewHideTimer = null;
+  }, Math.max(120, Number(ms) || 900));
+}
+
 function ensureVrTimeHud() {
   if (vrTimeHud.group) return vrTimeHud.group;
   const group = new THREE.Group();
@@ -683,6 +772,7 @@ function syncSolarTimeReadouts({pushSlider=true}={}) {
   if (typeof getSolarState !== 'function') return;
   const state = getSolarState();
   setSolarTimeReadouts(state?.minutes, {pushSlider});
+  setSolarMonthReadout(parseSolarMonthFromIsoDate(state?.date), {pushSlider});
 }
 
 function updateVrTimeHudPose() {
@@ -763,6 +853,11 @@ function getVrMenuCurrentValue(key, def) {
     return Number.isFinite(raw) ? raw : def.min;
   }
   if (key === 'userHeight') return getXrStandingEyeHeight();
+  if (key === 'solarMonth') {
+    if (typeof getSolarMonth === 'function') return getSolarMonth();
+    if (typeof getSolarState === 'function') return parseSolarMonthFromIsoDate(getSolarState()?.date);
+    return 1;
+  }
   const raw = Number(wallState[key]);
   return Number.isFinite(raw) ? raw : def.min;
 }
@@ -876,6 +971,31 @@ function applyVrMenuStateKey(key, nextValue) {
 
   if (key === 'userHeight') {
     setXrStandingEyeHeight(clamped, {persist: true, applyGroundSnap: true});
+    refreshVrQuickMenuValues();
+    return;
+  }
+
+  if (key === 'solarMonth') {
+    if (typeof setSolarMonth === 'function') {
+      setSolarMonth(clamped, {persist: true, emit: false});
+    } else if (typeof setSolarState === 'function' && typeof getSolarState === 'function') {
+      const current = getSolarState();
+      const dateRaw = String(current?.date || '');
+      const match = dateRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (match) {
+        const year = Number(match[1]);
+        const day = Number(match[3]);
+        const month = THREE.MathUtils.clamp(Math.round(clamped), 1, 12);
+        const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+        const safeDay = THREE.MathUtils.clamp(day, 1, maxDay);
+        const mm = String(month).padStart(2, '0');
+        const dd = String(safeDay).padStart(2, '0');
+        setSolarState({...current, date: `${year}-${mm}-${dd}`}, {persist: true, emit: false});
+      }
+    }
+    syncSolarTimeReadouts({pushSlider:true});
+    setSolarPathPreviewVisibleUi(true);
+    showSolarPathPreviewForMs(1000);
     refreshVrQuickMenuValues();
     return;
   }
@@ -2887,104 +3007,60 @@ function updateDesktopKeyboardMove(dt) {
   targetZ += desktopMoveDelta.z;
 }
 
-function setGroupOpacity(group, alpha) {
-  if (!group) return;
-  group.traverse(obj => {
-    if (!obj.material) return;
-    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-    materials.forEach(mat => {
-      if (!mat) return;
-      if (typeof mat.userData.baseOpacity !== 'number') {
-        mat.userData.baseOpacity = Number.isFinite(mat.opacity) ? mat.opacity : 1;
-      }
-      mat.transparent = true;
-      mat.opacity = mat.userData.baseOpacity * alpha;
-      mat.needsUpdate = true;
-    });
+function clearHoverOutline() {
+  if (hoverOutline && hoverOutline.parent) {
+    hoverOutline.parent.remove(hoverOutline);
+  }
+  if (hoverOutline?.geometry && typeof hoverOutline.geometry.dispose === 'function') {
+    hoverOutline.geometry.dispose();
+  }
+  const mats = Array.isArray(hoverOutline?.material) ? hoverOutline.material : [hoverOutline?.material];
+  mats.forEach(mat => {
+    if (mat && typeof mat.dispose === 'function') mat.dispose();
   });
+  hoverOutline = null;
+  hoverOutlineMesh = null;
 }
 
-function cloneFocusedMaterial(mat) {
-  if (!mat) return mat;
-  const c = mat.clone();
-  const baseOpacity = typeof mat.userData.baseOpacity === 'number'
-    ? mat.userData.baseOpacity
-    : (Number.isFinite(mat.opacity) ? mat.opacity : 1);
-  c.transparent = true;
-  c.opacity = baseOpacity;
-  c.needsUpdate = true;
-  return c;
-}
-
-function clearFocusedMaterials() {
-  focusedMaterialEntries.forEach(entry => {
-    if (!entry.obj) return;
-    entry.obj.material = entry.original;
-    const clones = Array.isArray(entry.clone) ? entry.clone : [entry.clone];
-    clones.forEach(c => {
-      if (c && typeof c.dispose === 'function') c.dispose();
-    });
-  });
-  focusedMaterialEntries = [];
-  activeFocusMesh = null;
-}
-
-function applyFocusedMeshMaterial(mesh) {
-  if (!mesh) return;
-  mesh.traverse(obj => {
-    if (!obj.material) return;
-    const original = obj.material;
-    const clone = Array.isArray(original)
-      ? original.map(m => cloneFocusedMaterial(m))
-      : cloneFocusedMaterial(original);
-    focusedMaterialEntries.push({obj, original, clone});
-    obj.material = clone;
-  });
-  activeFocusMesh = mesh;
-}
-
-function setSceneFaded(faded, focusMesh=null) {
-  if (!faded) {
-    clearFocusedMaterials();
-    setGroupOpacity(wallGroup, 1.0);
-    setGroupOpacity(labelGroup, 1.0);
-    sceneIsFaded = false;
+function setHoverOutline(mesh) {
+  if (!mesh || !mesh.geometry) {
+    clearHoverOutline();
     return;
   }
-
-  const focusChanged = activeFocusMesh !== focusMesh;
-  if (!sceneIsFaded || focusChanged) {
-    clearFocusedMaterials();
-    setGroupOpacity(wallGroup, 0.3);
-    setGroupOpacity(labelGroup, 0.3);
-    if (focusMesh) applyFocusedMeshMaterial(focusMesh);
-    sceneIsFaded = true;
-  }
-}
-
-function setDimGroupOpacity(alpha) {
-  setGroupOpacity(dimGroup, alpha);
-}
-
-function setDimensionsFaded(faded) {
-  if (dimsAreFaded === faded) return;
-  setDimGroupOpacity(faded ? 0.3 : 1.0);
-  dimsAreFaded = faded;
+  if (hoverOutline && hoverOutlineMesh === mesh && hoverOutline.parent === mesh) return;
+  clearHoverOutline();
+  const edgeGeo = new THREE.EdgesGeometry(mesh.geometry);
+  const edgeMat = new THREE.LineBasicMaterial({
+    color: 0xb6ee6b,
+    transparent: true,
+    opacity: 0.98,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const outline = new THREE.LineSegments(edgeGeo, edgeMat);
+  outline.renderOrder = 3500;
+  outline.frustumCulled = false;
+  outline.raycast = () => null;
+  mesh.add(outline);
+  hoverOutline = outline;
+  hoverOutlineMesh = mesh;
 }
 
 function hideHoverInfo() {
   if (hoverInfoEl) hoverInfoEl.style.display = 'none';
   clearHoverSectionDimensions();
-  setDimensionsFaded(false);
-  setSceneFaded(false);
+  clearHoverOutline();
+  if (hoverDimGroup) hoverDimGroup.visible = false;
+  if (dimGroup) dimGroup.visible = false;
   activeHoverMesh = null;
 }
 
 function updateHover(clientX, clientY) {
   if (isDragging || !hoverTargets.length) {
     clearHoverSectionDimensions();
-    setDimensionsFaded(false);
-    setSceneFaded(false);
+    clearHoverOutline();
+    if (hoverDimGroup) hoverDimGroup.visible = false;
+    if (dimGroup) dimGroup.visible = false;
     activeHoverMesh = null;
     if (hoverInfoEl) hoverInfoEl.style.display = 'none';
     return;
@@ -2993,8 +3069,9 @@ function updateHover(clientX, clientY) {
   const rect = renderer.domElement.getBoundingClientRect();
   if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
     clearHoverSectionDimensions();
-    setDimensionsFaded(false);
-    setSceneFaded(false);
+    clearHoverOutline();
+    if (hoverDimGroup) hoverDimGroup.visible = false;
+    if (dimGroup) dimGroup.visible = false;
     activeHoverMesh = null;
     if (hoverInfoEl) hoverInfoEl.style.display = 'none';
     return;
@@ -3008,8 +3085,9 @@ function updateHover(clientX, clientY) {
   const hit = hits.find(h => h.object.userData.sectionInfo);
   if (!hit) {
     clearHoverSectionDimensions();
-    setDimensionsFaded(false);
-    setSceneFaded(false);
+    clearHoverOutline();
+    if (hoverDimGroup) hoverDimGroup.visible = false;
+    if (dimGroup) dimGroup.visible = false;
     activeHoverMesh = null;
     if (hoverInfoEl) hoverInfoEl.style.display = 'none';
     return;
@@ -3017,8 +3095,9 @@ function updateHover(clientX, clientY) {
 
   const mesh = hit.object;
   const info = mesh.userData.sectionInfo;
-  setDimensionsFaded(true);
-  setSceneFaded(true, mesh);
+  setHoverOutline(mesh);
+  if (dimGroup) dimGroup.visible = false;
+  if (hoverDimGroup) hoverDimGroup.visible = true;
   if (mesh !== activeHoverMesh) {
     drawHoverSectionDimensions(mesh, info);
     activeHoverMesh = mesh;
@@ -3080,6 +3159,11 @@ function beginVrSkyTimeDrag(controllerIndex) {
   vrSkyTimeDrag.active = true;
   vrSkyTimeDrag.controllerIndex = controllerIndex;
   vrSkyTimeDrag.lastAzimuth = Math.atan2(vrSkyVec.x, vrSkyVec.z);
+  if (solarPathPreviewHideTimer) {
+    clearTimeout(solarPathPreviewHideTimer);
+    solarPathPreviewHideTimer = null;
+  }
+  setSolarPathPreviewVisibleUi(true);
   hideHoverInfo();
   return true;
 }
@@ -3090,6 +3174,7 @@ function updateVrSkyTimeDrag() {
   if (!state?.connected || !state.controller) {
     vrSkyTimeDrag.active = false;
     vrSkyTimeDrag.controllerIndex = -1;
+    setSolarPathPreviewVisibleUi(false);
     return false;
   }
   if (!readControllerWorldRay(state.controller)) return true;
@@ -3117,6 +3202,7 @@ function endVrSkyTimeDrag(controllerIndex=null, {save=true}={}) {
   }
   vrSkyTimeDrag.active = false;
   vrSkyTimeDrag.controllerIndex = -1;
+  setSolarPathPreviewVisibleUi(false);
   if (save && typeof saveSolarState === 'function') saveSolarState();
   return true;
 }
@@ -3554,6 +3640,61 @@ if (environmentToggle) {
   });
 }
 
+const GI_QUALITY_INDEX_TO_KEY = Object.freeze(['off', 'low', 'medium', 'high']);
+const GI_QUALITY_KEY_TO_INDEX = Object.freeze({
+  low: 1,
+  medium: 2,
+  high: 3,
+});
+
+function normalizeGiQualityKey(raw) {
+  const key = (typeof raw === 'string') ? raw.trim().toLowerCase() : '';
+  if (key === 'low' || key === 'high' || key === 'medium') return key;
+  return 'medium';
+}
+
+function syncGlobalIlluminationQualityUi() {
+  const slider = document.getElementById('globalIlluminationQualitySlider');
+  const label = document.getElementById('globalIlluminationQualityLabel');
+  if (!slider || !label) return;
+  const q = normalizeGiQualityKey(globalIlluminationQuality);
+  const index = globalIlluminationEnabled ? (GI_QUALITY_KEY_TO_INDEX[q] || 2) : 0;
+  slider.value = String(index);
+  label.textContent = (index === 0)
+    ? 'Off'
+    : (q.charAt(0).toUpperCase() + q.slice(1));
+}
+
+const globalIlluminationToggle = document.getElementById('globalIlluminationToggle');
+if (globalIlluminationToggle) {
+  globalIlluminationToggle.checked = !!globalIlluminationEnabled;
+  globalIlluminationToggle.addEventListener('change', () => {
+    setGlobalIlluminationEnabled(!!globalIlluminationToggle.checked);
+    syncGlobalIlluminationQualityUi();
+  });
+}
+const globalIlluminationQualitySlider = document.getElementById('globalIlluminationQualitySlider');
+if (globalIlluminationQualitySlider) {
+  const applyGiQualityFromSlider = () => {
+    const raw = Number(globalIlluminationQualitySlider.value);
+    const clamped = Math.max(0, Math.min(3, Number.isFinite(raw) ? Math.round(raw) : 0));
+    if (clamped <= 0) {
+      setGlobalIlluminationEnabled(false);
+      if (globalIlluminationToggle) globalIlluminationToggle.checked = false;
+      syncGlobalIlluminationQualityUi();
+      return;
+    }
+    const key = GI_QUALITY_INDEX_TO_KEY[clamped] || 'medium';
+    setGlobalIlluminationQuality(key);
+    setGlobalIlluminationEnabled(true);
+    if (globalIlluminationToggle) globalIlluminationToggle.checked = true;
+    syncGlobalIlluminationQualityUi();
+  };
+  globalIlluminationQualitySlider.addEventListener('input', applyGiQualityFromSlider);
+  globalIlluminationQualitySlider.addEventListener('change', applyGiQualityFromSlider);
+  syncGlobalIlluminationQualityUi();
+}
+
 if (solarTimeSliderEl) {
   syncSolarTimeReadouts({pushSlider:true});
   solarTimeSliderEl.addEventListener('input', () => {
@@ -3563,12 +3704,51 @@ if (solarTimeSliderEl) {
       setSolarTimeMinutes(next, {persist:false, emit:false});
     }
     setSolarTimeReadouts(next, {pushSlider:false});
+    showSolarPathPreviewForMs(1100);
   });
   solarTimeSliderEl.addEventListener('change', () => {
     if (typeof saveSolarState === 'function') saveSolarState();
+    setSolarPathPreviewVisibleUi(false);
   });
+  solarTimeSliderEl.addEventListener('pointerdown', () => setSolarPathPreviewVisibleUi(true));
+  solarTimeSliderEl.addEventListener('pointerup', () => showSolarPathPreviewForMs(600));
 } else {
   syncSolarTimeReadouts({pushSlider:false});
+}
+
+if (solarMonthSliderEl) {
+  syncSolarTimeReadouts({pushSlider:true});
+  const applySolarMonthFromSlider = (persist=false) => {
+    const raw = Number(solarMonthSliderEl.value);
+    const month = THREE.MathUtils.clamp(Math.round(Number.isFinite(raw) ? raw : 1), 1, 12);
+    if (typeof setSolarMonth === 'function') {
+      setSolarMonth(month, {persist, emit:false});
+    } else if (typeof setSolarState === 'function' && typeof getSolarState === 'function') {
+      const current = getSolarState();
+      const dateRaw = String(current?.date || '');
+      const match = dateRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (match) {
+        const year = Number(match[1]);
+        const day = Number(match[3]);
+        const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+        const safeDay = THREE.MathUtils.clamp(day, 1, daysInMonth);
+        const mm = String(month).padStart(2, '0');
+        const dd = String(safeDay).padStart(2, '0');
+        setSolarState({...current, date: `${year}-${mm}-${dd}`}, {persist, emit:false});
+      }
+    }
+    setSolarMonthReadout(month, {pushSlider:false});
+    syncSolarTimeReadouts({pushSlider:false});
+    showSolarPathPreviewForMs(1200);
+    if (persist && typeof saveSolarState === 'function') saveSolarState();
+  };
+  solarMonthSliderEl.addEventListener('input', () => applySolarMonthFromSlider(false));
+  solarMonthSliderEl.addEventListener('change', () => {
+    applySolarMonthFromSlider(true);
+    setSolarPathPreviewVisibleUi(false);
+  });
+  solarMonthSliderEl.addEventListener('pointerdown', () => setSolarPathPreviewVisibleUi(true));
+  solarMonthSliderEl.addEventListener('pointerup', () => showSolarPathPreviewForMs(650));
 }
 
 const officeToggle = document.getElementById('officeToggle');
@@ -3584,6 +3764,14 @@ if (saunaToggle) {
   saunaToggle.checked = saunaEnabled;
   saunaToggle.addEventListener('change', () => {
     setSaunaEnabled(saunaToggle.checked);
+  });
+}
+
+const outdoorKitchenToggle = document.getElementById('outdoorKitchenToggle');
+if (outdoorKitchenToggle) {
+  outdoorKitchenToggle.checked = outdoorKitchenEnabled;
+  outdoorKitchenToggle.addEventListener('change', () => {
+    setOutdoorKitchenEnabled(outdoorKitchenToggle.checked);
   });
 }
 
@@ -3687,6 +3875,8 @@ if (measurementTool && typeof measurementTool.render === 'function') measurement
 if (measurementTool && typeof measurementTool.syncState === 'function') {
   measurementTool.syncState('ui:measure:init');
 }
+if (dimGroup) dimGroup.visible = false;
+if (hoverDimGroup) hoverDimGroup.visible = false;
 
 // Resize
 function resize() {
@@ -3706,6 +3896,16 @@ function animate(now) {
     ? THREE.MathUtils.clamp((ts - lastAnimateTs) / 1000, 0.001, 0.05)
     : (1 / 60);
   lastAnimateTs = ts;
+
+  if (
+    hoverOutline &&
+    (!hoverOutline.parent || !hoverOutlineMesh || !hoverOutlineMesh.parent)
+  ) {
+    clearHoverOutline();
+    clearHoverSectionDimensions();
+    if (hoverDimGroup) hoverDimGroup.visible = false;
+    activeHoverMesh = null;
+  }
 
   if (xrSessionActive) {
     updateVrLocomotion(dt);
@@ -3728,6 +3928,7 @@ function animate(now) {
     }
   }
   updateInteractiveAnimations(dt);
+  if (typeof updateGlobalIlluminationFrame === 'function') updateGlobalIlluminationFrame(ts);
   syncSolarTimeReadouts({pushSlider:true});
   if (xrSessionActive) updateVrTimeHudPose();
 

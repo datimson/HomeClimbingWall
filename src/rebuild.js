@@ -406,6 +406,7 @@ function rebuild(options={}) {
       totalMs: perfNow() - rebuildStart,
       ts: Date.now(),
     });
+    if (typeof markGlobalIlluminationDirty === 'function') markGlobalIlluminationDirty();
     return;
   }
 
@@ -775,6 +776,7 @@ function rebuild(options={}) {
     totalMs: perfNow() - rebuildStart,
     ts: Date.now(),
   });
+  if (typeof markGlobalIlluminationDirty === 'function') markGlobalIlluminationDirty();
 }
 
 // Initial build
@@ -1482,11 +1484,17 @@ for (int i = 0; i < ${valid.length}; i++) {
 
   // Flat underside (soffit) under the main house roof geometry.
   const houseSoffitT = 0.017;
+  const houseSoffitMat = new THREE.MeshStandardMaterial({
+    color: 0xf8f8f6,
+    roughness: 0.94,
+    metalness: 0.02,
+    side: THREE.DoubleSide,
+  });
   const houseRoofSoffit = box(
     x1 - x0,
     houseSoffitT,
     z1 - z0,
-    new THREE.MeshLambertMaterial({ color: 0x6f757d, side: THREE.DoubleSide }),
+    houseSoffitMat,
     0, 0, 0,
     (x0 + x1) * 0.5,
     roofBaseY - (houseSoffitT * 0.5),
@@ -2356,6 +2364,171 @@ for (int i = 0; i < ${valid.length}; i++) {
     environmentGroup.add(benchBox);
   }
 
+  if (outdoorKitchenEnabled) {
+    // Outdoor kitchen / cabinet run:
+    // starts under the house rear window, runs to street-side end of slab,
+    // then turns and projects 1.8m out with BBQ at the end.
+    const kitchenBaseH = 0.90;
+    const kitchenBaseD = 0.62;
+    const kitchenTopT = 0.038;
+    const kitchenWallGap = 0.02;
+    const kitchenReturnLen = 1.8;
+    const kitchenTopOverhang = 0.02;
+    const kitchenBaseY = outdoorSlabH + (kitchenBaseH * 0.5);
+    const kitchenTopY = outdoorSlabH + kitchenBaseH + (kitchenTopT * 0.5);
+    const kitchenBaseMat = new THREE.MeshStandardMaterial({
+      color: 0x737b84,
+      roughness: 0.62,
+      metalness: 0.18,
+      side: THREE.DoubleSide,
+    });
+    const kitchenTopMat = new THREE.MeshLambertMaterial({ color: 0xd6d0c4, side: THREE.DoubleSide });
+    const kitchenEdgeMat = new THREE.LineBasicMaterial({ color: 0x4f5861, transparent: true, opacity: 0.68 });
+    const kitchenTopEdgeMat = new THREE.LineBasicMaterial({ color: 0x8f8777, transparent: true, opacity: 0.70 });
+
+    const kitchenStartZ = THREE.MathUtils.clamp(
+      rearWinZ0,
+      slabZ0 + 0.08,
+      slabZ1 - 0.60
+    );
+    const kitchenEndZ = slabZ1 - 0.05;
+    const kitchenRunLenZ = kitchenEndZ - kitchenStartZ;
+    const kitchenBackX = wallX0 - kitchenWallGap;
+    const kitchenFrontX = kitchenBackX - kitchenReturnLen;
+    const kitchenLongCenterX = kitchenBackX - (kitchenBaseD * 0.5);
+
+    if (kitchenRunLenZ > 0.35) {
+      const longBase = box(
+        kitchenBaseD,
+        kitchenBaseH,
+        kitchenRunLenZ,
+        kitchenBaseMat,
+        0, 0, 0,
+        kitchenLongCenterX,
+        kitchenBaseY,
+        (kitchenStartZ + kitchenEndZ) * 0.5
+      );
+      longBase.userData.context = 'outdoorKitchen';
+      longBase.castShadow = true;
+      longBase.receiveShadow = true;
+      longBase.add(new THREE.LineSegments(new THREE.EdgesGeometry(longBase.geometry), kitchenEdgeMat));
+      environmentGroup.add(longBase);
+
+      const longTop = box(
+        kitchenBaseD + (kitchenTopOverhang * 2),
+        kitchenTopT,
+        kitchenRunLenZ + (kitchenTopOverhang * 2),
+        kitchenTopMat,
+        0, 0, 0,
+        kitchenLongCenterX,
+        kitchenTopY,
+        (kitchenStartZ + kitchenEndZ) * 0.5
+      );
+      longTop.userData.context = 'outdoorKitchenTop';
+      longTop.castShadow = true;
+      longTop.receiveShadow = true;
+      longTop.add(new THREE.LineSegments(new THREE.EdgesGeometry(longTop.geometry), kitchenTopEdgeMat));
+      environmentGroup.add(longTop);
+
+      const returnCenterX = (kitchenBackX + kitchenFrontX) * 0.5;
+      const returnCenterZ = kitchenEndZ - (kitchenBaseD * 0.5);
+      const returnBase = box(
+        kitchenReturnLen,
+        kitchenBaseH,
+        kitchenBaseD,
+        kitchenBaseMat,
+        0, 0, 0,
+        returnCenterX,
+        kitchenBaseY,
+        returnCenterZ
+      );
+      returnBase.userData.context = 'outdoorKitchen';
+      returnBase.castShadow = true;
+      returnBase.receiveShadow = true;
+      returnBase.add(new THREE.LineSegments(new THREE.EdgesGeometry(returnBase.geometry), kitchenEdgeMat));
+      environmentGroup.add(returnBase);
+
+      const returnTop = box(
+        kitchenReturnLen + (kitchenTopOverhang * 2),
+        kitchenTopT,
+        kitchenBaseD + (kitchenTopOverhang * 2),
+        kitchenTopMat,
+        0, 0, 0,
+        returnCenterX,
+        kitchenTopY,
+        returnCenterZ
+      );
+      returnTop.userData.context = 'outdoorKitchenTop';
+      returnTop.castShadow = true;
+      returnTop.receiveShadow = true;
+      returnTop.add(new THREE.LineSegments(new THREE.EdgesGeometry(returnTop.geometry), kitchenTopEdgeMat));
+      environmentGroup.add(returnTop);
+
+      // BBQ at the end of the return run.
+      const bbqW = 0.72;
+      const bbqD = 0.58;
+      const bbqH = 0.88;
+      const bbqLidH = 0.22;
+      const bbqMat = new THREE.MeshStandardMaterial({
+        color: 0x2f343a,
+        roughness: 0.42,
+        metalness: 0.72,
+        side: THREE.DoubleSide,
+      });
+      const bbqTrimMat = new THREE.MeshLambertMaterial({ color: 0xa6acb2, side: THREE.DoubleSide });
+      const bbqEdgeMat = new THREE.LineBasicMaterial({ color: 0x454d55, transparent: true, opacity: 0.72 });
+      const bbqCabinetGap = 0.03;
+      const bbqCenterX = kitchenFrontX - (bbqW * 0.5) - bbqCabinetGap;
+      const bbqCenterZ = returnCenterZ;
+      const bbqBody = box(
+        bbqW,
+        bbqH,
+        bbqD,
+        bbqMat,
+        0, 0, 0,
+        bbqCenterX,
+        outdoorSlabH + (bbqH * 0.5),
+        bbqCenterZ
+      );
+      bbqBody.userData.context = 'outdoorKitchenBqq';
+      bbqBody.castShadow = true;
+      bbqBody.receiveShadow = true;
+      bbqBody.add(new THREE.LineSegments(new THREE.EdgesGeometry(bbqBody.geometry), bbqEdgeMat));
+      environmentGroup.add(bbqBody);
+
+      const bbqLid = box(
+        bbqW,
+        bbqLidH,
+        bbqD * 0.92,
+        bbqMat,
+        0, 0, 0,
+        bbqCenterX,
+        outdoorSlabH + bbqH + (bbqLidH * 0.5),
+        bbqCenterZ
+      );
+      bbqLid.userData.context = 'outdoorKitchenBqq';
+      bbqLid.castShadow = true;
+      bbqLid.receiveShadow = true;
+      bbqLid.add(new THREE.LineSegments(new THREE.EdgesGeometry(bbqLid.geometry), bbqEdgeMat));
+      environmentGroup.add(bbqLid);
+
+      const bbqShelf = box(
+        0.04,
+        0.02,
+        bbqD * 0.98,
+        bbqTrimMat,
+        0, 0, 0,
+        bbqCenterX - (bbqW * 0.5) - 0.02,
+        outdoorSlabH + bbqH * 0.76,
+        bbqCenterZ
+      );
+      bbqShelf.userData.context = 'outdoorKitchenBqq';
+      bbqShelf.castShadow = true;
+      bbqShelf.receiveShadow = true;
+      environmentGroup.add(bbqShelf);
+    }
+  }
+
   // Outdoor area roof + post set.
   // Two tall slab posts: 115x115 timber, 2480mm high.
   // Three house-side posts: extend 400mm above house roof, and roof slopes down to slab posts.
@@ -2376,7 +2549,6 @@ for (int i = 0; i < ${valid.length}; i++) {
     ? (() => {
       const m = claddingMat.clone();
       m.side = THREE.DoubleSide;
-      m.bumpScale = 0.08;
       m.needsUpdate = true;
       return m;
     })()
@@ -2519,6 +2691,166 @@ for (int i = 0; i < ${valid.length}; i++) {
   outdoorRoof.add(new THREE.LineSegments(new THREE.EdgesGeometry(outdoorRoofGeo), outdoorRoofEdgeMat));
   environmentGroup.add(outdoorRoof);
 
+  // Sloped outdoor ceiling liner (matte white aluminium), parallel to roof underside.
+  const outdoorCeilingT = 0.018;
+  const outdoorCeilingGap = 0.004;
+  const ct00 = rb00.clone(); ct00.y -= outdoorCeilingGap;
+  const ct10 = rb10.clone(); ct10.y -= outdoorCeilingGap;
+  const ct11 = rb11.clone(); ct11.y -= outdoorCeilingGap;
+  const ct01 = rb01.clone(); ct01.y -= outdoorCeilingGap;
+  const cb00 = ct00.clone(); cb00.y -= outdoorCeilingT;
+  const cb10 = ct10.clone(); cb10.y -= outdoorCeilingT;
+  const cb11 = ct11.clone(); cb11.y -= outdoorCeilingT;
+  const cb01 = ct01.clone(); cb01.y -= outdoorCeilingT;
+  const outdoorCeilingMat = new THREE.MeshStandardMaterial({
+    color: 0xf5f5f3,
+    roughness: 0.92,
+    metalness: 0.20,
+    side: THREE.DoubleSide,
+  });
+  const outdoorCeilingVerts = [
+    ct00.x, ct00.y, ct00.z,
+    ct10.x, ct10.y, ct10.z,
+    ct11.x, ct11.y, ct11.z,
+    ct01.x, ct01.y, ct01.z,
+    cb00.x, cb00.y, cb00.z,
+    cb10.x, cb10.y, cb10.z,
+    cb11.x, cb11.y, cb11.z,
+    cb01.x, cb01.y, cb01.z,
+  ];
+  const outdoorCeilingIdx = [
+    0, 1, 2, 0, 2, 3, // top
+    6, 5, 4, 7, 6, 4, // bottom
+    4, 5, 1, 4, 1, 0, // z0 side
+    5, 6, 2, 5, 2, 1, // x1 side
+    6, 7, 3, 6, 3, 2, // z1 side
+    7, 4, 0, 7, 0, 3, // x0 side
+  ];
+  const outdoorCeilingGeo = new THREE.BufferGeometry();
+  outdoorCeilingGeo.setAttribute('position', new THREE.Float32BufferAttribute(outdoorCeilingVerts, 3));
+  outdoorCeilingGeo.setIndex(outdoorCeilingIdx);
+  outdoorCeilingGeo.computeVertexNormals();
+  const outdoorCeiling = new THREE.Mesh(outdoorCeilingGeo, outdoorCeilingMat);
+  outdoorCeiling.userData.context = 'outdoorRoofCeiling';
+  outdoorCeiling.castShadow = true;
+  outdoorCeiling.receiveShadow = true;
+  outdoorCeiling.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(outdoorCeilingGeo),
+    new THREE.LineBasicMaterial({color: 0x9da1a8, transparent: true, opacity: 0.65})
+  ));
+  environmentGroup.add(outdoorCeiling);
+
+  const sampleOutdoorCeilingY = (x, z, underside=false) => {
+    const tx = THREE.MathUtils.clamp((x - roofX0) / Math.max(1e-6, (roofX1 - roofX0)), 0, 1);
+    const tz = THREE.MathUtils.clamp((z - roofZ0) / Math.max(1e-6, (roofZ1 - roofZ0)), 0, 1);
+    const yZ0 = THREE.MathUtils.lerp(ct00.y, ct10.y, tx);
+    const yZ1 = THREE.MathUtils.lerp(ct01.y, ct11.y, tx);
+    const topY = THREE.MathUtils.lerp(yZ0, yZ1, tz);
+    return underside ? (topY - outdoorCeilingT) : topY;
+  };
+
+  const downlightTrimMat = new THREE.MeshStandardMaterial({
+    color: 0xf2f3f4,
+    roughness: 0.62,
+    metalness: 0.12,
+    side: THREE.DoubleSide,
+  });
+  const downlightFaceMat = new THREE.MeshStandardMaterial({
+    color: 0xfff8ee,
+    emissive: 0xffefcf,
+    emissiveIntensity: 0.40,
+    roughness: 0.26,
+    metalness: 0.08,
+    side: THREE.DoubleSide,
+  });
+  const downlightRadius = 0.055;
+  const downlightDepth = 0.016;
+  const lightInsetX = Math.max(0.52, (roofX1 - roofX0) * 0.23);
+  const lightInsetZ = Math.max(0.62, (roofZ1 - roofZ0) * 0.22);
+  const lightXA = roofX0 + lightInsetX;
+  const lightXB = roofX1 - lightInsetX;
+  const lightZA = roofZ0 + lightInsetZ;
+  const lightZB = roofZ1 - lightInsetZ;
+  const addDownlight = (x, z) => {
+    const ceilingUnderY = sampleOutdoorCeilingY(x, z, true);
+    const downlightY = ceilingUnderY - (downlightDepth * 0.5) + 0.001;
+    const trim = new THREE.Mesh(
+      new THREE.CylinderGeometry(downlightRadius * 1.06, downlightRadius * 1.06, downlightDepth, 24),
+      downlightTrimMat
+    );
+    trim.position.set(x, downlightY, z);
+    trim.castShadow = false;
+    trim.receiveShadow = true;
+    trim.userData.context = 'outdoorRoofDownlight';
+    environmentGroup.add(trim);
+
+    const lens = new THREE.Mesh(
+      new THREE.CircleGeometry(downlightRadius * 0.84, 24),
+      downlightFaceMat
+    );
+    lens.rotation.x = -Math.PI * 0.5;
+    lens.position.set(x, downlightY - (downlightDepth * 0.5) - 0.001, z);
+    lens.userData.context = 'outdoorRoofDownlight';
+    environmentGroup.add(lens);
+  };
+  addDownlight(lightXA, lightZA);
+  addDownlight(lightXB, lightZA);
+  addDownlight(lightXA, lightZB);
+  addDownlight(lightXB, lightZB);
+
+  const fanCenterX = (roofX0 + roofX1) * 0.5;
+  const fanCenterZ = (roofZ0 + roofZ1) * 0.5;
+  const fanMountY = sampleOutdoorCeilingY(fanCenterX, fanCenterZ, true);
+  const fanMat = new THREE.MeshStandardMaterial({
+    color: 0xf5f5f3,
+    roughness: 0.62,
+    metalness: 0.20,
+    side: THREE.DoubleSide,
+  });
+  const fanStem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.016, 0.016, 0.17, 16),
+    fanMat
+  );
+  fanStem.position.set(fanCenterX, fanMountY - 0.085, fanCenterZ);
+  fanStem.userData.context = 'outdoorRoofFan';
+  environmentGroup.add(fanStem);
+
+  const fanHub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.105, 0.105, 0.042, 24),
+    fanMat
+  );
+  fanHub.position.set(fanCenterX, fanMountY - 0.196, fanCenterZ);
+  fanHub.userData.context = 'outdoorRoofFan';
+  environmentGroup.add(fanHub);
+
+  const fanBladeMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.58,
+    metalness: 0.10,
+    side: THREE.DoubleSide,
+  });
+  const fanBladeLen = 0.88;
+  const fanBladeW = 0.132;
+  const fanBladeT = 0.016;
+  for (let i = 0; i < 3; i++) {
+    const yaw = (i / 3) * Math.PI * 2;
+    const blade = new THREE.Mesh(
+      new THREE.BoxGeometry(fanBladeLen, fanBladeT, fanBladeW),
+      fanBladeMat
+    );
+    blade.position.set(
+      fanCenterX + Math.cos(yaw) * (fanBladeLen * 0.32),
+      fanMountY - 0.208,
+      fanCenterZ + Math.sin(yaw) * (fanBladeLen * 0.32)
+    );
+    blade.rotation.y = -yaw;
+    blade.rotation.z = THREE.MathUtils.degToRad(3);
+    blade.userData.context = 'outdoorRoofFan';
+    blade.castShadow = true;
+    blade.receiveShadow = true;
+    environmentGroup.add(blade);
+  }
+
   if (officeEnabled) {
     // Office building (3m x 3m): 1m from rear boundary, 6m from street-side boundary.
     // Skillion roof falls from high side (toward slab/house) to low side (toward street).
@@ -2538,7 +2870,6 @@ for (int i = 0; i < ${valid.length}; i++) {
       ? (() => {
         const m = claddingMat.clone();
         m.side = THREE.DoubleSide;
-        m.bumpScale = 0.08;
         m.needsUpdate = true;
         return m;
       })()
@@ -3086,13 +3417,15 @@ for (int i = 0; i < ${valid.length}; i++) {
     const saunaInnerUvMeters = 0.78;
     const saunaBenchUvMeters = 0.46;
     const saunaOuterMat = new THREE.MeshLambertMaterial({
-      color: 0xffffff,
+      color: 0xfffbf6,
       map: saunaPack?.outerMap || null,
       normalMap: saunaPack?.outerNormal || null,
       roughnessMap: saunaPack?.outerRough || null,
       aoMap: saunaPack?.outerAo || null,
       bumpMap: saunaPack?.outerBump || null,
       bumpScale: saunaPack?.outerBump ? 0.05 : 0.0,
+      emissive: 0x3a2c1b,
+      emissiveIntensity: 0.28,
       roughness: 0.92,
       metalness: 0.02,
       side: THREE.DoubleSide,
@@ -3101,25 +3434,29 @@ for (int i = 0; i < ${valid.length}; i++) {
       ? makeMonumentAxonMaterial(Math.max(0.2, saunaWidthZ), Math.max(0.4, saunaLowY))
       : saunaOuterMat;
     const saunaInnerMat = new THREE.MeshLambertMaterial({
-      color: 0xf2d8bc,
+      color: 0xfff2e1,
       map: saunaPack?.innerMap || null,
       normalMap: saunaPack?.innerNormal || null,
       roughnessMap: saunaPack?.innerRough || null,
       aoMap: saunaPack?.innerAo || null,
       bumpMap: saunaPack?.innerBump || null,
       bumpScale: saunaPack?.innerBump ? 0.035 : 0.0,
+      emissive: 0x402f1b,
+      emissiveIntensity: 0.34,
       roughness: 0.90,
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
     const saunaBenchMat = new THREE.MeshLambertMaterial({
-      color: 0xe9c79e,
+      color: 0xfcebd4,
       map: saunaPack?.innerMap || null,
       normalMap: saunaPack?.innerNormal || null,
       roughnessMap: saunaPack?.innerRough || null,
       aoMap: saunaPack?.innerAo || null,
       bumpMap: saunaPack?.innerBump || null,
       bumpScale: saunaPack?.innerBump ? 0.03 : 0.0,
+      emissive: 0x3a2a18,
+      emissiveIntensity: 0.3,
       roughness: 0.87,
       metalness: 0.0,
       side: THREE.DoubleSide,
@@ -3129,7 +3466,6 @@ for (int i = 0; i < ${valid.length}; i++) {
       ? (() => {
         const m = claddingMat.clone();
         m.side = THREE.DoubleSide;
-        m.bumpScale = 0.08;
         m.needsUpdate = true;
         return m;
       })()
@@ -3361,6 +3697,39 @@ for (int i = 0; i < ${valid.length}; i++) {
     );
     addSaunaMesh(sideInnerB, 'saunaLining');
 
+    // Interior cedar ceiling liner (sloped to follow sauna roof).
+    const ceilingGap = 0.010;
+    const ceilingT = 0.016;
+    const cx0 = ix0;
+    const cx1 = ix1;
+    const cz0 = iz0;
+    const cz1 = iz1;
+    const cTop0 = saunaRoofAtX(cx0) - ceilingGap;
+    const cTop1 = saunaRoofAtX(cx1) - ceilingGap;
+    const saunaCeilingGeo = new THREE.BufferGeometry();
+    saunaCeilingGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+      cx0, cTop0, cz0,
+      cx1, cTop1, cz0,
+      cx1, cTop1, cz1,
+      cx0, cTop0, cz1,
+      cx0, cTop0 - ceilingT, cz0,
+      cx1, cTop1 - ceilingT, cz0,
+      cx1, cTop1 - ceilingT, cz1,
+      cx0, cTop0 - ceilingT, cz1,
+    ], 3));
+    saunaCeilingGeo.setIndex([
+      0, 1, 2, 0, 2, 3, // top
+      6, 5, 4, 7, 6, 4, // bottom
+      4, 5, 1, 4, 1, 0, // z0 side
+      5, 6, 2, 5, 2, 1, // x1 side
+      6, 7, 3, 6, 3, 2, // z1 side
+      7, 4, 0, 7, 0, 3, // x0 side
+    ]);
+    saunaCeilingGeo.computeVertexNormals();
+    applyWorldBoxUv(saunaCeilingGeo, saunaInnerUvMeters);
+    const saunaCeiling = new THREE.Mesh(saunaCeilingGeo, saunaInnerMat);
+    addSaunaMesh(saunaCeiling, 'saunaCeiling');
+
     // Cedar floor panel.
     const floorInset = 0.01;
     const floorX0 = saunaX0 + saunaWallT + floorInset;
@@ -3505,13 +3874,13 @@ for (int i = 0; i < ${valid.length}; i++) {
       }
     }
 
-    // Centered sauna door on outdoor-area wall.
-    const doorFrameMat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    // Centered sauna door on outdoor-area wall: timber leaf with high window.
+    const doorFrameMat = saunaBenchMat;
     const doorGlassMat = new THREE.MeshPhongMaterial({
-      color: 0xdce8f1,
+      color: 0xdbe8ef,
       transparent: true,
-      opacity: 0.46,
-      shininess: 80,
+      opacity: 0.55,
+      shininess: 72,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -3548,20 +3917,69 @@ for (int i = 0; i < ${valid.length}; i++) {
       saunaDoorBottomY + (saunaDoorH * 0.5),
       doorCenterZ + (saunaDoorW * 0.5) + (doorFrameT * 0.5)
     ), 'saunaDoorFrame');
-    const saunaDoor = new THREE.Mesh(
-      new THREE.PlaneGeometry(saunaDoorW - 0.03, saunaDoorH - 0.03),
-      doorGlassMat
-    );
-    saunaDoor.position.set(
-      saunaX1 + doorFrameD + 0.004,
-      saunaDoorBottomY + (saunaDoorH * 0.5),
-      doorCenterZ
-    );
-    saunaDoor.rotation.y = Math.PI * 0.5;
-    saunaDoor.castShadow = true;
-    saunaDoor.receiveShadow = true;
+    const doorLeafT = 0.042;
+    const doorLeafH = saunaDoorH - 0.035;
+    const doorLeafW = saunaDoorW - 0.035;
+    const doorLeafCenterX = saunaX1 + doorFrameD + (doorLeafT * 0.5) + 0.004;
+    const doorLeafCenterY = saunaDoorBottomY + (doorLeafH * 0.5);
+    const saunaDoor = new THREE.Group();
+    saunaDoor.position.set(doorLeafCenterX, doorLeafCenterY, doorCenterZ);
+    saunaDoor.rotation.y = 0;
     saunaDoor.userData.context = 'saunaDoor';
     environmentGroup.add(saunaDoor);
+
+    const addDoorPart = (w, h, z, y, mat, context='saunaDoor') => {
+      if (w <= 0.005 || h <= 0.005) return null;
+      const part = box(doorLeafT, h, w, mat, 0, 0, 0, 0, y, z);
+      applyWorldBoxUv(part.geometry, saunaBenchUvMeters);
+      part.castShadow = true;
+      part.receiveShadow = true;
+      part.userData.context = context;
+      part.add(new THREE.LineSegments(new THREE.EdgesGeometry(part.geometry), saunaEdgeMat));
+      saunaDoor.add(part);
+      return part;
+    };
+
+    const stileW = 0.080;
+    const topRailH = 0.095;
+    const bottomRailH = 0.150;
+    const midRailH = 0.070;
+    const halfLeafH = doorLeafH * 0.5;
+    const halfLeafW = doorLeafW * 0.5;
+    const innerW = Math.max(0.18, doorLeafW - (stileW * 2));
+    const windowBottomY = (-halfLeafH) + (doorLeafH * 0.62);
+    const windowTopY = Math.min(halfLeafH - topRailH - 0.018, windowBottomY + (doorLeafH * 0.25));
+    const windowH = Math.max(0.14, windowTopY - windowBottomY);
+
+    addDoorPart(stileW, doorLeafH, -halfLeafW + (stileW * 0.5), 0, doorFrameMat, 'saunaDoorLeaf');
+    addDoorPart(stileW, doorLeafH, halfLeafW - (stileW * 0.5), 0, doorFrameMat, 'saunaDoorLeaf');
+    addDoorPart(innerW, topRailH, 0, halfLeafH - (topRailH * 0.5), doorFrameMat, 'saunaDoorLeaf');
+    addDoorPart(innerW, bottomRailH, 0, -halfLeafH + (bottomRailH * 0.5), doorFrameMat, 'saunaDoorLeaf');
+    addDoorPart(innerW, midRailH, 0, windowBottomY - (midRailH * 0.5), doorFrameMat, 'saunaDoorLeaf');
+
+    const panelBottomY = -halfLeafH + bottomRailH;
+    const panelTopY = windowBottomY - midRailH;
+    const panelH = panelTopY - panelBottomY;
+    if (panelH > 0.06) {
+      addDoorPart(Math.max(0.10, innerW - 0.028), panelH, 0, (panelBottomY + panelTopY) * 0.5, doorFrameMat, 'saunaDoorLeaf');
+    }
+
+    const windowW = Math.max(0.12, innerW - 0.018);
+    const glassH = Math.max(0.10, windowH - 0.012);
+    const glass = box(
+      doorLeafT * 0.40,
+      glassH,
+      windowW,
+      doorGlassMat,
+      0, 0, 0,
+      0,
+      (windowBottomY + windowTopY) * 0.5,
+      0
+    );
+    glass.castShadow = true;
+    glass.receiveShadow = true;
+    glass.userData.context = 'saunaDoorGlass';
+    saunaDoor.add(glass);
 
     // Corrugated skillion roof (falls to rear boundary).
     const roofX0 = saunaX0 - saunaRoofOverhangX;

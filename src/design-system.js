@@ -18,11 +18,17 @@
     trainingCabinet: 'climbingWall.trainingCabinet.v1',
     campusBoard: 'climbingWall.campusBoard.v1',
     conceptVolumes: 'climbingWall.conceptVolumes.v1',
+    office: 'climbingWall.office.v1',
+    sauna: 'climbingWall.sauna.v1',
+    outdoorKitchen: 'climbingWall.outdoorKitchen.v1',
     wallTextures: 'climbingWall.wallTextures.v1',
     climbingHolds: 'climbingWall.climbingHolds.v1',
     crashMatTexture: 'climbingWall.crashMatTexture.v1',
     textures: 'climbingWall.textures.v1',
     environment: 'climbingWall.environment.v1',
+    globalIllumination: 'climbingWall.globalIllumination.v1',
+    globalIlluminationQuality: 'climbingWall.globalIlluminationQuality.v1',
+    solarState: 'climbingWall.solarState.v1',
   });
 
   const CLASSIC_GEOMETRY_DEFAULTS = Object.freeze({
@@ -244,11 +250,17 @@
       trainingCabinet: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.trainingCabinet),
       campusBoard: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.campusBoard),
       conceptVolumes: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.conceptVolumes),
+      office: LEGACY_STORAGE_KEYS.office,
+      sauna: LEGACY_STORAGE_KEYS.sauna,
+      outdoorKitchen: LEGACY_STORAGE_KEYS.outdoorKitchen,
       wallTextures: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.wallTextures),
       climbingHolds: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.climbingHolds),
       crashMatTexture: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.crashMatTexture),
       textures: buildScopedStorageKey(designId, LEGACY_STORAGE_KEYS.textures),
       environment: LEGACY_STORAGE_KEYS.environment,
+      globalIllumination: LEGACY_STORAGE_KEYS.globalIllumination,
+      globalIlluminationQuality: LEGACY_STORAGE_KEYS.globalIlluminationQuality,
+      solarState: LEGACY_STORAGE_KEYS.solarState,
     };
   }
 
