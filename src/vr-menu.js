@@ -548,7 +548,7 @@
     }
 
     function titleForTarget(target) {
-      if (target === 'S') return 'Wall Size';
+      if (target === 'S') return 'Wall Controls';
       if (target === 'R') return 'Training Rig';
       return `Wall ${target}`;
     }

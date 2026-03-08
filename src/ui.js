@@ -221,8 +221,9 @@ const XR_STICK_DEADZONE = 0.16;
 const XR_STICK_CLICK_BUTTON_INDEX = 3;
 // Use only the left X/menu-equivalent button by default.
 // Support both X and Y on the left controller.
-const XR_MENU_BUTTON_INDICES = Object.freeze([4, 5]);
-const XR_MEASURE_HOLD_BUTTON_INDEX = 4; // Right controller A button.
+const XR_MENU_BUTTON_INDICES = Object.freeze([3, 4, 5]);
+const XR_MEASURE_HOLD_BUTTON_INDEX = 3; // Right controller A button.
+const XR_MEASURE_CLEAR_BUTTON_INDICES = Object.freeze([4, 5]); // Right controller B/Y fallback.
 const XR_MENU_TOGGLE_COOLDOWN_MS = 280;
 const XR_TELEPORT_MAX_DISTANCE = 20;
 const XR_TELEPORT_SURFACE_EPS = 0.012;
@@ -355,7 +356,7 @@ const VR_MENU_TARGET_KEYS = Object.freeze({
   B: ['bAngle', 'bWidth'],
   C: ['cAngle', 'cWidth'],
   D: ['dAngle', 'd1Height', 'd2Angle'],
-  E: ['eAngle'],
+  E: ['eAngle', 'adjHeight'],
   F: ['f1Angle', 'f1Height', 'f1Width', 'f2Angle', 'f2WidthTop'],
   R: ['rigOpen'],
   G: [],
@@ -945,7 +946,7 @@ function vrMenuTitleForTarget(target) {
   if (vrMenuManager && typeof vrMenuManager.titleForTarget === 'function') {
     return vrMenuManager.titleForTarget(target);
   }
-  if (target === 'S') return 'Wall Size';
+  if (target === 'S') return 'Wall Controls';
   if (target === 'R') return 'Training Rig';
   return `Wall ${target}`;
 }
@@ -2052,6 +2053,7 @@ function ensureVrControllers() {
       skyHit: null,
       stickPressedLast: false,
       menuPressedLast: false,
+      measureClearPressedLast: false,
       anyPressedLast: false,
       suppressWorldSelectUntil: 0,
     };
@@ -2086,12 +2088,54 @@ function readControllerWorldRay(controller) {
   return Number.isFinite(xrRayDir.x) && Number.isFinite(xrRayDir.y) && Number.isFinite(xrRayDir.z);
 }
 
+function getSceneActionHitByRay(raycasterInst) {
+  if (!Array.isArray(sceneActionTargets) || !sceneActionTargets.length || !raycasterInst) return null;
+  const hits = raycasterInst.intersectObjects(sceneActionTargets, false);
+  return hits.find(h => !!h?.object?.userData?.sceneAction) || null;
+}
+
+function handleSceneActionHit(hit) {
+  const action = hit?.object?.userData?.sceneAction;
+  if (!action) return false;
+  if (action === 'toggleOfficeRollerDoor') {
+    if (typeof toggleOfficeRollerDoor === 'function') {
+      toggleOfficeRollerDoor();
+      return true;
+    }
+    if (typeof setOfficeRollerDoorOpen === 'function' && typeof getOfficeRollerDoorOpen === 'function') {
+      setOfficeRollerDoorOpen(!getOfficeRollerDoorOpen());
+      return true;
+    }
+  }
+  return false;
+}
+
 function getVrInteractiveHit() {
-  if (!Array.isArray(hoverTargets) || !hoverTargets.length) return null;
   xrRaycaster.far = XR_TELEPORT_MAX_DISTANCE;
   xrRaycaster.set(xrRayOrigin, xrRayDir);
-  const hits = xrRaycaster.intersectObjects(hoverTargets, false);
-  return hits.find(h => h?.object?.userData?.sectionInfo) || null;
+  let sectionHit = null;
+  if (Array.isArray(hoverTargets) && hoverTargets.length) {
+    const hits = xrRaycaster.intersectObjects(hoverTargets, false);
+    sectionHit = hits.find(h => h?.object?.userData?.sectionInfo) || null;
+  }
+  const actionHit = getSceneActionHitByRay(xrRaycaster);
+  if (sectionHit && actionHit) return sectionHit.distance <= actionHit.distance ? sectionHit : actionHit;
+  return sectionHit || actionHit || null;
+}
+
+function getDesktopSceneActionHit(clientX, clientY) {
+  if (!Array.isArray(sceneActionTargets) || !sceneActionTargets.length) return null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+  hoverMouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  hoverMouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(hoverMouse, camera);
+  return getSceneActionHitByRay(raycaster);
+}
+
+function handleDesktopInteractiveClick(clientX, clientY) {
+  const sceneActionHit = getDesktopSceneActionHit(clientX, clientY);
+  return handleSceneActionHit(sceneActionHit);
 }
 
 function getVrFloorHit(maxDistance=XR_TELEPORT_MAX_DISTANCE) {
@@ -2246,6 +2290,37 @@ function readVrMeasureHoldPressed(state) {
   return !!buttons[XR_MEASURE_HOLD_BUTTON_INDEX]?.pressed;
 }
 
+function readVrMeasureClearPressed(state) {
+  if (!state?.connected || state.handedness !== 'right') return false;
+  const buttons = state.inputSource?.gamepad?.buttons;
+  if (!buttons?.length) return false;
+  for (let i = 0; i < XR_MEASURE_CLEAR_BUTTON_INDICES.length; i++) {
+    const idx = XR_MEASURE_CLEAR_BUTTON_INDICES[i];
+    if (!!buttons[idx]?.pressed) return true;
+  }
+  return false;
+}
+
+function updateVrMeasurementClearButton() {
+  if (!xrSessionActive || !measurementTool || typeof measurementTool.clearAll !== 'function') {
+    xrControllers.forEach(state => {
+      if (state) state.measureClearPressedLast = false;
+    });
+    return false;
+  }
+  let cleared = false;
+  xrControllers.forEach(state => {
+    if (!state) return;
+    const pressed = readVrMeasureClearPressed(state);
+    if (pressed && !state.measureClearPressedLast) {
+      measurementTool.clearAll({segments: true, active: true});
+      cleared = true;
+    }
+    state.measureClearPressedLast = pressed;
+  });
+  return cleared;
+}
+
 function updateVrMeasurementHoldState() {
   if (!xrSessionActive) {
     xrMeasureHoldActive = false;
@@ -2268,6 +2343,7 @@ function updateVrMeasurementHoldState() {
 }
 
 function handleVrInteractiveClick(hit) {
+  if (handleSceneActionHit(hit)) return true;
   const info = hit?.object?.userData?.sectionInfo;
   if (!info) return false;
   return openVrQuickMenuForInfo(info);
@@ -2612,6 +2688,7 @@ function updateVrLocomotion(dtSeconds) {
 
   updateVrMoveModeToggle();
   updateVrMenuButtonToggle();
+  updateVrMeasurementClearButton();
   if (xrMoveMode === XR_MOVE_MODE.GROUNDED) updateGroundFloorFromHead(xrCam, true);
   const blockedSource = vrMenuMove.active
     ? (xrControllers.find(s => s.index === vrMenuMove.controllerIndex)?.inputSource || null)
@@ -3301,6 +3378,15 @@ wrap.addEventListener('contextmenu', e => {
     return;
   }
   e.preventDefault();
+});
+wrap.addEventListener('click', e => {
+  if (e.button !== 0) return;
+  if (isDragging) return;
+  if (measurementTool && typeof measurementTool.isEnabled === 'function' && measurementTool.isEnabled()) return;
+  if (handleDesktopInteractiveClick(e.clientX, e.clientY)) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
 });
 window.addEventListener('mouseup', e => {
   if (measurementTool) measurementTool.pointerUp(e);

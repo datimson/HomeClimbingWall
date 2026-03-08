@@ -1307,6 +1307,7 @@ let hoverDimGroup = new THREE.Group();
 hoverDimGroup.position.set(WALL_ORIGIN_X, 0, WALL_ORIGIN_Z);
 scene.add(hoverDimGroup);
 let hoverTargets = [];
+let sceneActionTargets = [];
 let scalePersonBillboard = null;
 let scalePersonMesh = null;
 let scalePersonCompanionBillboard = null;
@@ -1320,6 +1321,7 @@ let trainingCabinetEnabled = readStoredBool(TRAINING_CABINET_STORAGE_KEY, true);
 let campusBoardEnabled = readStoredBool(CAMPUS_BOARD_STORAGE_KEY, true);
 let conceptVolumesEnabled = readStoredBool(CONCEPT_VOLUMES_STORAGE_KEY, true);
 let officeEnabled = readStoredBool(OFFICE_STORAGE_KEY, true);
+let officeRollerDoorOpen = false;
 let saunaEnabled = readStoredBool(SAUNA_STORAGE_KEY, true);
 let outdoorKitchenEnabled = readStoredBool(OUTDOOR_KITCHEN_STORAGE_KEY, true);
 let texturedWallsEnabled = readStoredBool(WALL_TEXTURES_STORAGE_KEY, true);
@@ -1476,6 +1478,17 @@ function setOfficeEnabled(enabled) {
   persistStoredBool(OFFICE_STORAGE_KEY, officeEnabled);
   requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
   syncAppStateFromCore('toggle:office');
+}
+
+function setOfficeRollerDoorOpen(open, {rebuild=true, emit=true}={}) {
+  officeRollerDoorOpen = !!open;
+  if (rebuild) requestCoreRebuild([CORE_REBUILD_STAGE.GEOMETRY]);
+  if (emit) syncAppStateFromCore('scene:officeRollerDoor');
+}
+
+function toggleOfficeRollerDoor({rebuild=true, emit=true}={}) {
+  setOfficeRollerDoorOpen(!officeRollerDoorOpen, {rebuild, emit});
+  return officeRollerDoorOpen;
 }
 
 function setSaunaEnabled(enabled) {
@@ -2657,6 +2670,7 @@ function buildCoreAppStateSnapshot() {
       campusBoardEnabled,
       conceptVolumesEnabled,
       officeEnabled,
+      officeRollerDoorOpen,
       saunaEnabled,
       outdoorKitchenEnabled,
       texturedWallsEnabled,
@@ -2712,6 +2726,7 @@ function applyCoreSnapshotToLegacy(nextState, options={}) {
     if (typeof t.campusBoardEnabled === 'boolean') setCampusBoardEnabled(t.campusBoardEnabled);
     if (typeof t.conceptVolumesEnabled === 'boolean') setConceptVolumesEnabled(t.conceptVolumesEnabled);
     if (typeof t.officeEnabled === 'boolean') setOfficeEnabled(t.officeEnabled);
+    if (typeof t.officeRollerDoorOpen === 'boolean') setOfficeRollerDoorOpen(t.officeRollerDoorOpen, {emit:false});
     if (typeof t.saunaEnabled === 'boolean') setSaunaEnabled(t.saunaEnabled);
     if (typeof t.outdoorKitchenEnabled === 'boolean') setOutdoorKitchenEnabled(t.outdoorKitchenEnabled);
     if (typeof t.texturesEnabled === 'boolean') setTexturesEnabled(t.texturesEnabled);
@@ -2762,4 +2777,7 @@ if (typeof window !== 'undefined') {
   window.getGlobalIlluminationQualityLabels = () => ({...GI_QUALITY_LABELS});
   window.updateGlobalIlluminationFrame = updateGlobalIlluminationFrame;
   window.markGlobalIlluminationDirty = markGlobalIlluminationDirty;
+  window.setOfficeRollerDoorOpen = setOfficeRollerDoorOpen;
+  window.toggleOfficeRollerDoor = toggleOfficeRollerDoor;
+  window.getOfficeRollerDoorOpen = () => !!officeRollerDoorOpen;
 }

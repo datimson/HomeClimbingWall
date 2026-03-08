@@ -381,6 +381,7 @@ function rebuild(options={}) {
     while(labelGroup.children.length) labelGroup.remove(labelGroup.children[0]);
     while(hoverDimGroup.children.length) hoverDimGroup.remove(hoverDimGroup.children[0]);
     hoverTargets.length = 0;
+    if (Array.isArray(sceneActionTargets)) sceneActionTargets.length = 0;
     adjPivot = null;
   } else if (plan.annotations) {
     while(dimGroup.children.length)  dimGroup.remove(dimGroup.children[0]);
@@ -877,7 +878,6 @@ function rebuild(options={}) {
     if (saunaEnabled) {
       const boundaryMin = -FENCE_OFFSET_FROM_ORIGIN;
       const saunaWidthZ = 3.0;
-      const saunaDepthX = 1.7;
       const saunaRearSetbackX = 0.5;
       const saunaLowY = 1.95;
       const saunaHighY = 2.1;
@@ -895,7 +895,10 @@ function rebuild(options={}) {
       const slabCenterZScene = (slabZ0Scene + slabZ1Scene) * 0.5;
 
       const saunaX0Scene = boundaryMin + saunaRearSetbackX;
-      const saunaX1Scene = saunaX0Scene + saunaDepthX;
+      const slabX1Scene = HOUSE_BACK_OFFSET_X + HOUSE_EAVE_INSET;
+      const slabX0Scene = slabX1Scene - OUTDOOR_SLAB_PROJECTION_X;
+      const saunaX1Scene = slabX0Scene;
+      const saunaDepthX = Math.max(0.2, saunaX1Scene - saunaX0Scene);
       const saunaZ0Scene = slabCenterZScene - (saunaWidthZ * 0.5);
       const saunaZ1Scene = slabCenterZScene + (saunaWidthZ * 0.5);
       const saunaRearSetback = Math.max(0, saunaX0Scene - boundaryMin);
@@ -2813,6 +2816,123 @@ for (int i = 0; i < ${valid.length}; i++) {
     }
   }
 
+  // Outdoor dining set: monument slat table + bench seats.
+  const tableLenZ = 2.20;
+  const tableWidthX = 1.08;
+  const tableHeightY = 0.75;
+  const tableTopT = 0.052;
+  const tableLegW = 0.060;
+  const benchWidthX = 0.40;
+  const benchHeightY = 0.44;
+  const benchTopT = 0.045;
+  const benchGapX = 0.10;
+  const benchLenZ = tableLenZ;
+  const furnitureBaseY = outdoorSlabH;
+
+  const furniturePad = 0.16;
+  const diningHalfX = Math.max(tableWidthX * 0.5, (tableWidthX * 0.5) + benchGapX + benchWidthX);
+  const diningHalfZ = tableLenZ * 0.5;
+  const kitchenReserveX = outdoorKitchenEnabled ? 1.10 : 0.35;
+  const postReserveX = 0.90;
+  const postReserveZ = 0.72;
+  const usableXMin = slabX0 + Math.max(furniturePad + diningHalfX, postReserveX + (tableWidthX * 0.5));
+  const usableXMax = slabX1 - Math.max(furniturePad + diningHalfX, kitchenReserveX);
+  const usableZMin = slabZ0 + Math.max(furniturePad + diningHalfZ, postReserveZ);
+  const usableZMax = slabZ1 - Math.max(furniturePad + diningHalfZ, postReserveZ);
+  const tableCenterX = (usableXMin <= usableXMax)
+    ? ((usableXMin + usableXMax) * 0.5)
+    : THREE.MathUtils.clamp((slabX0 + slabX1) * 0.5, slabX0 + diningHalfX + furniturePad, slabX1 - diningHalfX - furniturePad);
+  const tableCenterZ = (usableZMin <= usableZMax)
+    ? ((usableZMin + usableZMax) * 0.5)
+    : THREE.MathUtils.clamp((slabZ0 + slabZ1) * 0.5, slabZ0 + diningHalfZ + furniturePad, slabZ1 - diningHalfZ - furniturePad);
+
+  const furnitureMat = new THREE.MeshLambertMaterial({ color: 0x4a4d52, side: THREE.DoubleSide });
+  const furnitureEdgeMat = new THREE.LineBasicMaterial({ color: 0x2f3237, transparent: true, opacity: 0.62 });
+
+  const addFurniturePart = (mesh, context='outdoorTable') => {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.context = context;
+    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), furnitureEdgeMat));
+    environmentGroup.add(mesh);
+    return mesh;
+  };
+  const addSlatTop = (centerX, centerY, centerZ, totalX, totalZ, topT, slatCount, context='outdoorTable') => {
+    const gap = 0.010;
+    const inset = 0.02;
+    const usableX = Math.max(0.05, totalX - (inset * 2));
+    const count = Math.max(2, slatCount);
+    const slatX = Math.max(0.018, (usableX - (gap * (count - 1))) / count);
+    const xStart = centerX - (usableX * 0.5) + (slatX * 0.5);
+    for (let i = 0; i < count; i++) {
+      addFurniturePart(
+        box(
+          slatX,
+          topT,
+          totalZ - (inset * 2),
+          furnitureMat,
+          0, 0, 0,
+          xStart + (i * (slatX + gap)),
+          centerY,
+          centerZ
+        ),
+        context
+      );
+    }
+  };
+
+  // Table.
+  const tableTopY = furnitureBaseY + tableHeightY - (tableTopT * 0.5);
+  addSlatTop(tableCenterX, tableTopY, tableCenterZ, tableWidthX, tableLenZ, tableTopT, 10, 'outdoorTable');
+  const tableLegH = Math.max(0.08, tableHeightY - tableTopT);
+  const tableLegY = furnitureBaseY + (tableLegH * 0.5);
+  const tableLegInsetX = (tableWidthX * 0.5) - (tableLegW * 0.7);
+  const tableLegInsetZ = (tableLenZ * 0.5) - (tableLegW * 0.8);
+  [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([sx, sz]) => {
+    addFurniturePart(
+      box(
+        tableLegW,
+        tableLegH,
+        tableLegW,
+        furnitureMat,
+        0, 0, 0,
+        tableCenterX + (sx * tableLegInsetX),
+        tableLegY,
+        tableCenterZ + (sz * tableLegInsetZ)
+      ),
+      'outdoorTable'
+    );
+  });
+
+  // Bench seats.
+  const benchOffsetX = (tableWidthX * 0.5) + benchGapX + (benchWidthX * 0.5);
+  const benchLegW = 0.055;
+  const benchLegInsetX = (benchWidthX * 0.5) - (benchLegW * 0.7);
+  const benchLegInsetZ = (benchLenZ * 0.5) - (benchLegW * 0.8);
+  const benchLegH = Math.max(0.08, benchHeightY - benchTopT);
+  const benchLegY = furnitureBaseY + (benchLegH * 0.5);
+  const addBench = (centerX) => {
+    const seatTopY = furnitureBaseY + benchHeightY - (benchTopT * 0.5);
+    addSlatTop(centerX, seatTopY, tableCenterZ, benchWidthX, benchLenZ, benchTopT, 4, 'outdoorBenchSeat');
+    [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([sx, sz]) => {
+      addFurniturePart(
+        box(
+          benchLegW,
+          benchLegH,
+          benchLegW,
+          furnitureMat,
+          0, 0, 0,
+          centerX + (sx * benchLegInsetX),
+          benchLegY,
+          tableCenterZ + (sz * benchLegInsetZ)
+        ),
+        'outdoorBenchSeat'
+      );
+    });
+  };
+  addBench(tableCenterX - benchOffsetX);
+  addBench(tableCenterX + benchOffsetX);
+
   // Outdoor area roof + post set.
   // Two tall slab posts: 115x115 timber, 2480mm high.
   // Three house-side posts: extend 400mm above house roof, and roof slopes down to slab posts.
@@ -3441,15 +3561,26 @@ for (int i = 0; i < ${valid.length}; i++) {
     map: createRollerDoorTexture(),
     side: THREE.FrontSide,
   });
-  const rollerDoor = new THREE.Mesh(new THREE.PlaneGeometry(rollerDoorW, rollerDoorH), rollerDoorMat);
+  const rollerDoorVisibleH = officeRollerDoorOpen
+    ? Math.max(0.18, Math.min(0.34, rollerDoorH * 0.20))
+    : rollerDoorH;
+  const rollerDoorCenterY = officeRollerDoorOpen
+    ? (rollerDoorBottomY + rollerDoorH - (rollerDoorVisibleH * 0.5))
+    : (rollerDoorBottomY + (rollerDoorVisibleH * 0.5));
+  const rollerDoor = new THREE.Mesh(new THREE.PlaneGeometry(rollerDoorW, rollerDoorVisibleH), rollerDoorMat);
   rollerDoor.position.set(
     (officeX0 + officeX1) * 0.5,
-    rollerDoorBottomY + (rollerDoorH * 0.5),
+    rollerDoorCenterY,
     officeZ1 + 0.014
   );
   rollerDoor.userData.context = 'officeRollerDoor';
+  rollerDoor.userData.sceneAction = 'toggleOfficeRollerDoor';
   rollerDoor.castShadow = true;
   rollerDoor.receiveShadow = true;
+  if (rollerDoorMat.map && rollerDoorMat.map.repeat) {
+    rollerDoorMat.map.repeat.set(1, officeRollerDoorOpen ? 0.22 : 1.2);
+    rollerDoorMat.map.needsUpdate = true;
+  }
   const rollerDoorFrameMat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
   const frameT = 0.04;
   const frameD = 0.06;
@@ -3459,6 +3590,7 @@ for (int i = 0; i < ${valid.length}; i++) {
   environmentGroup.add(box(frameT, rollerDoorH + frameT, frameD, rollerDoorFrameMat, 0, 0, 0, (officeX0 + officeX1) * 0.5 - (rollerDoorW * 0.5) - (frameT * 0.5), frameYCenter, frameZ));
   environmentGroup.add(box(frameT, rollerDoorH + frameT, frameD, rollerDoorFrameMat, 0, 0, 0, (officeX0 + officeX1) * 0.5 + (rollerDoorW * 0.5) + (frameT * 0.5), frameYCenter, frameZ));
   environmentGroup.add(rollerDoor);
+  if (Array.isArray(sceneActionTargets)) sceneActionTargets.push(rollerDoor);
 
   // Internal wall separating storage (street side) and office side.
   const partitionOffsetFromStreet = Number(OFFICE_PARTITION_FROM_STREET_Z) || 0.8;
@@ -3678,9 +3810,8 @@ for (int i = 0; i < ${valid.length}; i++) {
 
   if (saunaEnabled) {
     // Sauna centered along outdoor slab width.
-    // 3.0m wide (Z), 1.7m deep (X), 0.5m off rear boundary.
+    // 3.0m wide (Z), 0.5m off rear boundary, depth extends to the outdoor slab edge.
     const saunaWidthZ = 3.0;
-    const saunaDepthX = 1.7;
     const saunaRearSetbackX = 0.5;
     const saunaWallT = 0.09;
     const saunaBaseY = 0.0;
@@ -3694,7 +3825,7 @@ for (int i = 0; i < ${valid.length}; i++) {
     const saunaDoorBottomY = 0.04;
 
     const saunaX0 = boundaryMin + saunaRearSetbackX;
-    const saunaX1 = saunaX0 + saunaDepthX;
+    const saunaX1 = slabX0;
     const slabCenterZ = (slabZ0 + slabZ1) * 0.5;
     const saunaZ0 = slabCenterZ - (saunaWidthZ * 0.5);
     const saunaZ1 = slabCenterZ + (saunaWidthZ * 0.5);
@@ -4113,12 +4244,12 @@ for (int i = 0; i < ${valid.length}; i++) {
     };
     const upperBenchDepth = 0.50;
     const lowerBenchDepth = 0.40;
-    const lowerBenchGap = 0.06;
     const upperBenchRearX = benchRearFaceX;
     const upperBenchFrontX = upperBenchRearX + upperBenchDepth;
-    const lowerBenchRearX = Math.min(
-      ix1 - lowerBenchDepth - 0.05,
-      upperBenchFrontX + lowerBenchGap
+    const lowerBenchRearX = THREE.MathUtils.clamp(
+      upperBenchFrontX,
+      ix0 + 0.06,
+      ix1 - lowerBenchDepth - 0.02
     );
     addSaunaBench(upperBenchRearX, upperBenchDepth, 0.95, 'saunaBenchUpper');
     addSaunaBench(lowerBenchRearX, lowerBenchDepth, 0.50, 'saunaBenchLower');
